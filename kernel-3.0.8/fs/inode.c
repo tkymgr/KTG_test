@@ -269,7 +269,7 @@ void inode_init_once(struct inode *inode)
 	mutex_init(&inode->inotify_mutex);
 #endif
 #ifdef CONFIG_FSNOTIFY
-	INIT_HLIST_HEAD(&inode->i_fsnotify_mark_entries);
+	INIT_HLIST_HEAD(&inode->i_fsnotify_marks);
 #endif
 }
 EXPORT_SYMBOL(inode_init_once);
@@ -290,7 +290,7 @@ void __iget(struct inode *inode)
 		return;
 
 	if (!(inode->i_state & (I_DIRTY|I_SYNC)))
-		list_move(&inode->i_list, &inode_in_use);
+		list_move(&inode->i_wb_list, &inode_in_use);
 	inodes_stat.nr_unused--;
 }
 
@@ -335,8 +335,8 @@ static void dispose_list(struct list_head *head)
 	while (!list_empty(head)) {
 		struct inode *inode;
 
-		inode = list_first_entry(head, struct inode, i_list);
-		list_del(&inode->i_list);
+		inode = list_first_entry(head, struct inode, i_wb_list);
+		list_del(&inode->i_wb_list);
 
 		if (inode->i_data.nrpages)
 			truncate_inode_pages(&inode->i_data, 0);
@@ -385,7 +385,7 @@ static int invalidate_list(struct list_head *head, struct list_head *dispose)
 			continue;
 		invalidate_inode_buffers(inode);
 		if (!atomic_read(&inode->i_count)) {
-			list_move(&inode->i_list, dispose);
+			list_move(&inode->i_wb_list, dispose);
 			WARN_ON(inode->i_state & I_NEW);
 			inode->i_state |= I_FREEING;
 			count++;
@@ -466,10 +466,10 @@ static void prune_icache(int nr_to_scan)
 		if (list_empty(&inode_unused))
 			break;
 
-		inode = list_entry(inode_unused.prev, struct inode, i_list);
+		inode = list_entry(inode_unused.prev, struct inode, i_wb_list);
 
 		if (inode->i_state || atomic_read(&inode->i_count)) {
-			list_move(&inode->i_list, &inode_unused);
+			list_move(&inode->i_wb_list, &inode_unused);
 			continue;
 		}
 		if (inode_has_buffers(inode) || inode->i_data.nrpages) {
@@ -482,12 +482,12 @@ static void prune_icache(int nr_to_scan)
 			spin_lock(&inode_lock);
 
 			if (inode != list_entry(inode_unused.next,
-						struct inode, i_list))
+						struct inode, i_wb_list))
 				continue;	/* wrong inode or list_empty */
 			if (!can_unuse(inode))
 				continue;
 		}
-		list_move(&inode->i_list, &freeable);
+		list_move(&inode->i_wb_list, &freeable);
 		WARN_ON(inode->i_state & I_NEW);
 		inode->i_state |= I_FREEING;
 		nr_pruned++;
@@ -602,7 +602,7 @@ __inode_add_to_lists(struct super_block *sb, struct hlist_head *head,
 			struct inode *inode)
 {
 	inodes_stat.nr_inodes++;
-	list_add(&inode->i_list, &inode_in_use);
+	list_add(&inode->i_wb_list, &inode_in_use);
 	list_add(&inode->i_sb_list, &sb->s_inodes);
 	if (head)
 		hlist_add_head(&inode->i_hash, head);
@@ -1196,7 +1196,7 @@ void generic_delete_inode(struct inode *inode)
 {
 	const struct super_operations *op = inode->i_sb->s_op;
 
-	list_del_init(&inode->i_list);
+	list_del_init(&inode->i_wb_list);
 	list_del_init(&inode->i_sb_list);
 	WARN_ON(inode->i_state & I_NEW);
 	inode->i_state |= I_FREEING;
@@ -1238,7 +1238,7 @@ int generic_detach_inode(struct inode *inode)
 
 	if (!hlist_unhashed(&inode->i_hash)) {
 		if (!(inode->i_state & (I_DIRTY|I_SYNC)))
-			list_move(&inode->i_list, &inode_unused);
+			list_move(&inode->i_wb_list, &inode_unused);
 		inodes_stat.nr_unused++;
 		if (sb->s_flags & MS_ACTIVE) {
 			spin_unlock(&inode_lock);
@@ -1254,7 +1254,7 @@ int generic_detach_inode(struct inode *inode)
 		inodes_stat.nr_unused--;
 		hlist_del_init(&inode->i_hash);
 	}
-	list_del_init(&inode->i_list);
+	list_del_init(&inode->i_wb_list);
 	list_del_init(&inode->i_sb_list);
 	WARN_ON(inode->i_state & I_NEW);
 	inode->i_state |= I_FREEING;

@@ -414,7 +414,7 @@ static void init_once(void *foo)
 	INIT_LIST_HEAD(&bdev->bd_inodes);
 	INIT_LIST_HEAD(&bdev->bd_list);
 #ifdef CONFIG_SYSFS
-	INIT_LIST_HEAD(&bdev->bd_holder_list);
+	INIT_LIST_HEAD(&bdev->bd_holder_disks);
 #endif
 	inode_init_once(&ei->vfs_inode);
 	/* Initialize mutex for freeze. */
@@ -993,7 +993,7 @@ static struct bd_holder *find_bd_holder(struct block_device *bdev,
 {
 	struct bd_holder *tmp;
 
-	list_for_each_entry(tmp, &bdev->bd_holder_list, list)
+	list_for_each_entry(tmp, &bdev->bd_holder_disks, list)
 		if (tmp->sdir == bo->sdir) {
 			tmp->count++;
 			return tmp;
@@ -1033,7 +1033,7 @@ static int add_bd_holder(struct block_device *bdev, struct bd_holder *bo)
 		return err;
 	}
 
-	list_add_tail(&bo->list, &bdev->bd_holder_list);
+	list_add_tail(&bo->list, &bdev->bd_holder_disks);
 	return 0;
 }
 
@@ -1057,7 +1057,7 @@ static struct bd_holder *del_bd_holder(struct block_device *bdev,
 {
 	struct bd_holder *bo;
 
-	list_for_each_entry(bo, &bdev->bd_holder_list, list) {
+	list_for_each_entry(bo, &bdev->bd_holder_disks, list) {
 		if (bo->sdir == kobj) {
 			bo->count--;
 			BUG_ON(bo->count < 0);

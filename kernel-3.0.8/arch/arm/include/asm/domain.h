@@ -3,7 +3,7 @@
  *
  *  Copyright (C) 1999 Russell King.
  *  Copyright (c) 2009, Code Aurora Forum. All rights reserved.
- *  KTG modified for Xperia
+ *  KTG modified for Xperia 2011
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
