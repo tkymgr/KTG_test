@@ -1298,19 +1298,6 @@ void run_local_timers(void)
 	softlockup_tick();
 }
 
-/*
- * The 64-bit jiffies value is not atomic - you MUST NOT read it
- * without sampling the sequence number in xtime_lock.
- * jiffies is defined in the linker script...
- */
-
-void do_timer(unsigned long ticks)
-{
-	jiffies_64 += ticks;
-	update_wall_time();
-	calc_global_load(ticks);
-}
-
 #ifdef __ARCH_WANT_SYS_ALARM
 
 /*
@@ -1763,7 +1750,7 @@ static int __sched do_usleep_range(unsigned long min, unsigned long max)
 	unsigned long delta;
 
 	kmin = ktime_set(0, min * NSEC_PER_USEC);
-	delta = max - min;
+	delta = (max - min) * NSEC_PER_USEC;
 	return schedule_hrtimeout_range(&kmin, delta, HRTIMER_MODE_REL);
 }
 

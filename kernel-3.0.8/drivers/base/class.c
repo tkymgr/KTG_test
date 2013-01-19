@@ -276,25 +276,6 @@ void class_destroy(struct class *cls)
 	class_unregister(cls);
 }
 
-#ifdef CONFIG_SYSFS_DEPRECATED
-char *make_class_name(const char *name, struct kobject *kobj)
-{
-	char *class_name;
-	int size;
-
-	size = strlen(name) + strlen(kobject_name(kobj)) + 2;
-
-	class_name = kmalloc(size, GFP_KERNEL);
-	if (!class_name)
-		return NULL;
-
-	strcpy(class_name, name);
-	strcat(class_name, ":");
-	strcat(class_name, kobject_name(kobj));
-	return class_name;
-}
-#endif
-
 /**
  * class_dev_iter_init - initialize class device iterator
  * @iter: class iterator to initialize
@@ -501,8 +482,8 @@ void class_interface_unregister(struct class_interface *class_intf)
 	class_put(parent);
 }
 
-ssize_t show_class_attr_string(struct class *class, struct class_attribute *attr,
-                        	char *buf)
+ssize_t show_class_attr_string(struct class *class,
+			       struct class_attribute *attr, char *buf)
 {
 	struct class_attribute_string *cs;
 	cs = container_of(attr, struct class_attribute_string, attr);

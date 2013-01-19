@@ -24,6 +24,7 @@
 
 static DEFINE_SPINLOCK(swap_token_lock);
 struct mm_struct *swap_token_mm;
+struct mem_cgroup *swap_token_memcg;
 static unsigned int global_faults;
 
 void grab_swap_token(struct mm_struct *mm)

@@ -1345,7 +1345,7 @@ again:
 	}
 
 	__count_zone_vm_events(PGALLOC, zone, 1 << order);
-	zone_statistics(preferred_zone, zone);
+	zone_statistics(preferred_zone, zone, gfp_flags);
 	local_irq_restore(flags);
 
 	VM_BUG_ON(bad_range(zone, page));
@@ -4752,15 +4752,6 @@ void __init set_dma_reserve(unsigned long new_dma_reserve)
 {
 	dma_reserve = new_dma_reserve;
 }
-
-#ifndef CONFIG_NEED_MULTIPLE_NODES
-struct pglist_data __refdata contig_page_data = {
-#ifndef CONFIG_NO_BOOTMEM
- .bdata = &bootmem_node_data[0]
-#endif
- };
-EXPORT_SYMBOL(contig_page_data);
-#endif
 
 void __init free_area_init(unsigned long *zones_size)
 {

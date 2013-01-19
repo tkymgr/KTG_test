@@ -38,12 +38,16 @@ struct memblock {
 
 extern struct memblock memblock;
 
-extern void __init memblock_init(void);
-extern void __init memblock_analyze(void);
-extern long memblock_add(u64 base, u64 size);
-extern long memblock_remove(u64 base, u64 size);
-extern long __init memblock_free(u64 base, u64 size);
-extern long __init memblock_reserve(u64 base, u64 size);
+extern void memblock_init(void);
+extern void memblock_analyze(void);
+extern long memblock_add(phys_addr_t base, phys_addr_t size);
+extern long memblock_remove(phys_addr_t base, phys_addr_t size);
+extern long memblock_free(phys_addr_t base, phys_addr_t size);
+extern long memblock_reserve(phys_addr_t base, phys_addr_t size);
+
+/* The numa aware allocator is only available if
+ * CONFIG_ARCH_POPULATES_NODE_MAP is set
+ */
 extern u64 __init memblock_alloc_nid(u64 size, u64 align, int nid,
 				u64 (*nid_range)(u64, u64, int *));
 extern u64 __init memblock_alloc(u64 size, u64 align);
