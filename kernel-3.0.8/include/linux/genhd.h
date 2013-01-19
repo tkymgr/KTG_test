@@ -107,6 +107,7 @@ struct hd_struct {
 #else
 	struct disk_stats dkstats;
 #endif
+	atomic_t ref;
 	struct rcu_head rcu_head;
 	char partition_name[GENHD_PART_NAME_SIZE];
 };
@@ -119,6 +120,12 @@ struct hd_struct {
 #define GENHD_FL_SUPPRESS_PARTITION_INFO	32
 #define GENHD_FL_EXT_DEVT			64 /* allow extended devt */
 #define GENHD_FL_NATIVE_CAPACITY		128
+#define GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE	256
+
+enum {
+	DISK_EVENT_MEDIA_CHANGE			= 1 << 0, /* media changed */
+	DISK_EVENT_EJECT_REQUEST		= 1 << 1, /* eject requested */
+};
 
 #define BLK_SCSI_MAX_CMDS	(256)
 #define BLK_SCSI_CMD_PER_LONG	(BLK_SCSI_MAX_CMDS / (sizeof(long) * 8))
@@ -132,9 +139,11 @@ struct blk_scsi_cmd_filter {
 struct disk_part_tbl {
 	struct rcu_head rcu_head;
 	int len;
-	struct hd_struct *last_lookup;
-	struct hd_struct *part[];
+	struct hd_struct __rcu *last_lookup;
+	struct hd_struct __rcu *part[];
 };
+
+struct disk_events;
 
 struct gendisk {
 	/* major, first_minor and minors are input parameters only,
@@ -147,12 +156,16 @@ struct gendisk {
 
 	char disk_name[DISK_NAME_LEN];	/* name of major driver */
 	char *(*devnode)(struct gendisk *gd, mode_t *mode);
+
+	unsigned int events;		/* supported events */
+	unsigned int async_events;	/* async events, subset of all */
+
 	/* Array of pointers to partitions indexed by partno.
 	 * Protected with matching bdev lock but stat and other
 	 * non-critical accesses use RCU.  Always access through
 	 * helpers.
 	 */
-	struct disk_part_tbl *part_tbl;
+	struct disk_part_tbl __rcu *part_tbl;
 	struct hd_struct part0;
 
 	const struct block_device_operations *fops;
@@ -164,7 +177,6 @@ struct gendisk {
 	struct kobject *slave_dir;
 
 	struct timer_rand_state *random;
-
 	atomic_t sync_io;		/* RAID */
 	struct work_struct async_notify;
 #ifdef  CONFIG_BLK_DEV_INTEGRITY
@@ -182,6 +194,30 @@ static inline struct gendisk *part_to_disk(struct hd_struct *part)
 			return dev_to_disk(part_to_dev(part));
 	}
 	return NULL;
+}
+
+static inline void part_pack_uuid(const u8 *uuid_str, u8 *to)
+{
+	int i;
+	for (i = 0; i < 16; ++i) {
+		*to++ = (hex_to_bin(*uuid_str) << 4) |
+			(hex_to_bin(*(uuid_str + 1)));
+		uuid_str += 2;
+		switch (i) {
+		case 3:
+		case 5:
+		case 7:
+		case 9:
+			uuid_str++;
+			continue;
+		}
+	}
+}
+
+static inline char *part_unpack_uuid(const u8 *uuid, char *out)
+{
+	sprintf(out, "%pU", uuid);
+	return out;
 }
 
 static inline int disk_max_parts(struct gendisk *disk)
@@ -564,6 +600,18 @@ extern ssize_t part_fail_store(struct device *dev,
 			       struct device_attribute *attr,
 			       const char *buf, size_t count);
 #endif /* CONFIG_FAIL_MAKE_REQUEST */
+
+static inline void hd_ref_init(struct hd_struct *part)
+{
+	atomic_set(&part->ref, 1);
+	smp_mb();
+}
+
+static inline void hd_struct_get(struct hd_struct *part)
+{
+	atomic_inc(&part->ref);
+	smp_mb__after_atomic_inc();
+}
 
 #else /* CONFIG_BLOCK */
 
