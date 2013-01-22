@@ -3,6 +3,7 @@ config ARM
 	default y
 	select HAVE_AOUT
 	select HAVE_IDE
+	select HAVE_MEMBLOCK
 	select RTC_LIB
 	select SYS_SUPPORTS_APM_EMULATION
 	select GENERIC_ATOMIC64 if (!CPU_32v6K)
@@ -139,9 +140,10 @@ config ARM_TICKET_LOCKS
 
 config RWSEM_GENERIC_SPINLOCK
 	bool
+	default y
 
 config RWSEM_XCHGADD_ALGORITHM
-	def_bool y
+	bool
 
 config ARCH_HAS_ILOG2_U32
 	bool
