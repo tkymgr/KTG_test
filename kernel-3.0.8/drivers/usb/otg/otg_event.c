@@ -28,7 +28,7 @@ struct otg_event_drv {
 	char name[MAX_NAME_SIZE];
 };
 
-static DECLARE_MUTEX(sem);
+static DEFINE_SEMAPHORE(sem);
 
 static struct otg_event_drv *otg_event;
 

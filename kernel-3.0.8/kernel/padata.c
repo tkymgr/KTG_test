@@ -94,7 +94,7 @@ static void padata_parallel_worker(struct work_struct *work)
  * @pinst: padata instance
  * @padata: object to be parallelized
  * @cb_cpu: cpu the serialization callback function will run on,
- *          must be in the cpumask of padata.
+ *          must be in the serial cpumask of padata(i.e. cpumask.cbcpu).
  *
  * The parallelization callback function will run with BHs off.
  * Note: Every object which is parallelized by padata_do_parallel
@@ -293,7 +293,7 @@ static void padata_reorder(struct parallel_data *pd)
 		/*
 		 * This cpu has to do the parallel processing of the next
 		 * object. It's waiting in the cpu's parallelization queue,
-		 * so exit imediately.
+		 * so exit immediately.
 		 */
 		if (PTR_ERR(padata) == -ENODATA) {
 			del_timer(&pd->timer);
@@ -315,7 +315,7 @@ static void padata_reorder(struct parallel_data *pd)
 	/*
 	 * The next object that needs serialization might have arrived to
 	 * the reorder queues in the meantime, we will be called again
-	 * from the timer function if noone else cares for it.
+	 * from the timer function if no one else cares for it.
 	 */
 	if (atomic_read(&pd->reorder_objects)
 			&& !(pinst->flags & PADATA_RESET))
