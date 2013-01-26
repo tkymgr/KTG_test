@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/char/pty.c
+ *
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
  *  Added support for a Unix98-style ptmx device.
@@ -21,6 +23,7 @@
 #include <linux/major.h>
 #include <linux/mm.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/sysctl.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
@@ -59,9 +62,7 @@ static void pty_close(struct tty_struct *tty, struct file *filp)
 		if (tty->driver == ptm_driver)
 			devpts_pty_kill(tty->link);
 #endif
-		tty_unlock();
 		tty_vhangup(tty->link);
-		tty_lock();
 	}
 }
 
@@ -167,23 +168,6 @@ static int pty_set_lock(struct tty_struct *tty, int __user *arg)
 		set_bit(TTY_PTY_LOCK, &tty->flags);
 	else
 		clear_bit(TTY_PTY_LOCK, &tty->flags);
-	return 0;
-}
-
-/* Send a signal to the slave */
-static int pty_signal(struct tty_struct *tty, int sig)
-{
-	unsigned long flags;
-	struct pid *pgrp;
-
-	if (tty->link) {
-		spin_lock_irqsave(&tty->link->ctrl_lock, flags);
-		pgrp = get_pid(tty->link->pgrp);
-		spin_unlock_irqrestore(&tty->link->ctrl_lock, flags);
-
-		kill_pgrp(pgrp, sig, 1);
-		put_pid(pgrp);
-	}
 	return 0;
 }
 
@@ -293,8 +277,8 @@ static int pty_install(struct tty_driver *driver, struct tty_struct *tty)
 		return -ENOMEM;
 	if (!try_module_get(driver->other->owner)) {
 		/* This cannot in fact currently happen */
-		retval = -ENOMEM;
-		goto err_free_tty;
+		free_tty_struct(o_tty);
+		return -ENOMEM;
 	}
 	initialize_tty_struct(o_tty, driver->other, idx);
 
@@ -302,11 +286,13 @@ static int pty_install(struct tty_driver *driver, struct tty_struct *tty)
 	   the easy way .. */
 	retval = tty_init_termios(tty);
 	if (retval)
-		goto err_deinit_tty;
+		goto free_mem_out;
 
 	retval = tty_init_termios(o_tty);
-	if (retval)
-		goto err_free_termios;
+	if (retval) {
+		tty_free_termios(tty);
+		goto free_mem_out;
+	}
 
 	/*
 	 * Everything allocated ... set up the o_tty structure.
@@ -323,24 +309,18 @@ static int pty_install(struct tty_driver *driver, struct tty_struct *tty)
 	tty->count++;
 	driver->ttys[idx] = tty;
 	return 0;
-err_free_termios:
-	tty_free_termios(tty);
-err_deinit_tty:
-	deinitialize_tty_struct(o_tty);
+free_mem_out:
 	module_put(o_tty->driver->owner);
-err_free_tty:
 	free_tty_struct(o_tty);
-	return retval;
+	return -ENOMEM;
 }
 
-static int pty_bsd_ioctl(struct tty_struct *tty,
+static int pty_bsd_ioctl(struct tty_struct *tty, struct file *file,
 			 unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
 	case TIOCSPTLCK: /* Set PT Lock (disallow slave open) */
 		return pty_set_lock(tty, (int __user *) arg);
-	case TIOCSIG:    /* Send signal to other side of pty */
-		return pty_signal(tty, (int) arg);
 	}
 	return -ENOIOCTLCMD;
 }
@@ -446,18 +426,7 @@ static inline void legacy_pty_init(void) { }
 int pty_limit = NR_UNIX98_PTY_DEFAULT;
 static int pty_limit_min;
 static int pty_limit_max = NR_UNIX98_PTY_MAX;
-static int tty_count;
 static int pty_count;
-
-static inline void pty_inc_count(void)
-{
-	pty_count = (++tty_count) / 2;
-}
-
-static inline void pty_dec_count(void)
-{
-	pty_count = (--tty_count) / 2;
-}
 
 static struct cdev ptmx_cdev;
 
@@ -499,7 +468,7 @@ static struct ctl_table pty_root_table[] = {
 };
 
 
-static int pty_unix98_ioctl(struct tty_struct *tty,
+static int pty_unix98_ioctl(struct tty_struct *tty, struct file *file,
 			    unsigned int cmd, unsigned long arg)
 {
 	switch (cmd) {
@@ -507,8 +476,6 @@ static int pty_unix98_ioctl(struct tty_struct *tty,
 		return pty_set_lock(tty, (int __user *)arg);
 	case TIOCGPTN: /* Get PT Number */
 		return put_user(tty->index, (unsigned int __user *)arg);
-	case TIOCSIG:    /* Send signal to other side of pty */
-		return pty_signal(tty, (int) arg);
 	}
 
 	return -ENOIOCTLCMD;
@@ -553,7 +520,6 @@ static struct tty_struct *pts_unix98_lookup(struct tty_driver *driver,
 
 static void pty_unix98_shutdown(struct tty_struct *tty)
 {
-	tty_driver_remove_tty(tty->driver, tty);
 	/* We have our own method as we don't use the tty index */
 	kfree(tty->termios);
 }
@@ -571,19 +537,20 @@ static int pty_unix98_install(struct tty_driver *driver, struct tty_struct *tty)
 		return -ENOMEM;
 	if (!try_module_get(driver->other->owner)) {
 		/* This cannot in fact currently happen */
-		goto err_free_tty;
+		free_tty_struct(o_tty);
+		return -ENOMEM;
 	}
 	initialize_tty_struct(o_tty, driver->other, idx);
 
 	tty->termios = kzalloc(sizeof(struct ktermios[2]), GFP_KERNEL);
 	if (tty->termios == NULL)
-		goto err_free_mem;
+		goto free_mem_out;
 	*tty->termios = driver->init_termios;
 	tty->termios_locked = tty->termios + 1;
 
 	o_tty->termios = kzalloc(sizeof(struct ktermios[2]), GFP_KERNEL);
 	if (o_tty->termios == NULL)
-		goto err_free_mem;
+		goto free_mem_out;
 	*o_tty->termios = driver->other->init_termios;
 	o_tty->termios_locked = o_tty->termios + 1;
 
@@ -600,22 +567,19 @@ static int pty_unix98_install(struct tty_driver *driver, struct tty_struct *tty)
 	 */
 	tty_driver_kref_get(driver);
 	tty->count++;
-	pty_inc_count(); /* tty */
-	pty_inc_count(); /* tty->link */
+	pty_count++;
 	return 0;
-err_free_mem:
-	deinitialize_tty_struct(o_tty);
+free_mem_out:
 	kfree(o_tty->termios);
-	kfree(tty->termios);
 	module_put(o_tty->driver->owner);
-err_free_tty:
 	free_tty_struct(o_tty);
+	kfree(tty->termios);
 	return -ENOMEM;
 }
 
 static void pty_unix98_remove(struct tty_driver *driver, struct tty_struct *tty)
 {
-	pty_dec_count();
+	pty_count--;
 }
 
 static const struct tty_operations ptm_unix98_ops = {
@@ -662,7 +626,7 @@ static const struct tty_operations pty_unix98_ops = {
  *		allocated_ptys_lock handles the list of free pty numbers
  */
 
-static int ptmx_open(struct inode *inode, struct file *filp)
+static int __ptmx_open(struct inode *inode, struct file *filp)
 {
 	struct tty_struct *tty;
 	int retval;
@@ -671,14 +635,11 @@ static int ptmx_open(struct inode *inode, struct file *filp)
 	nonseekable_open(inode, filp);
 
 	/* find a device that is not in use. */
-	tty_lock();
 	index = devpts_new_index(inode);
-	tty_unlock();
 	if (index < 0)
 		return index;
 
 	mutex_lock(&tty_mutex);
-	tty_lock();
 	tty = tty_init_dev(ptm_driver, index, 1);
 	mutex_unlock(&tty_mutex);
 
@@ -688,29 +649,32 @@ static int ptmx_open(struct inode *inode, struct file *filp)
 	}
 
 	set_bit(TTY_PTY_LOCK, &tty->flags); /* LOCK THE SLAVE */
-
-	retval = tty_add_file(tty, filp);
-	if (retval)
-		goto out;
+	filp->private_data = tty;
+	file_move(filp, &tty->tty_files);
 
 	retval = devpts_pty_new(inode, tty->link);
 	if (retval)
 		goto out1;
 
 	retval = ptm_driver->ops->open(tty, filp);
-	if (retval)
-		goto out2;
+	if (!retval)
+		return 0;
 out1:
-	tty_unlock();
-	return retval;
-out2:
-	tty_unlock();
 	tty_release(inode, filp);
 	return retval;
 out:
 	devpts_kill_index(inode, index);
-	tty_unlock();
 	return retval;
+}
+
+static int ptmx_open(struct inode *inode, struct file *filp)
+{
+	int ret;
+
+	lock_kernel();
+	ret = __ptmx_open(inode, filp);
+	unlock_kernel();
+	return ret;
 }
 
 static struct file_operations ptmx_fops;

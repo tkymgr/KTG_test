@@ -146,7 +146,7 @@ static struct sn_sal_ops intr_ops = {
 };
 
 /* the console does output in two distinctly different ways:
- * synchronous (raw) and asynchronous (buffered).  initially, early_printk
+ * synchronous (raw) and asynchronous (buffered).  initally, early_printk
  * does synchronous output.  any data written goes directly to the SAL
  * to be output (incidentally, it is internally buffered by the SAL)
  * after interrupts and timers are initialized and available for use,
@@ -470,7 +470,7 @@ sn_receive_chars(struct sn_cons_port *port, unsigned long flags)
 	}
 
 	if (port->sc_port.state) {
-		/* The serial_core stuffs are initialized, use them */
+		/* The serial_core stuffs are initilized, use them */
 		tty = port->sc_port.state->port.tty;
 	}
 	else {
@@ -481,7 +481,7 @@ sn_receive_chars(struct sn_cons_port *port, unsigned long flags)
 	while (port->sc_ops->sal_input_pending()) {
 		ch = port->sc_ops->sal_getc();
 		if (ch < 0) {
-			printk(KERN_ERR "sn_console: An error occurred while "
+			printk(KERN_ERR "sn_console: An error occured while "
 			       "obtaining data from the console (0x%0x)\n", ch);
 			break;
 		}
@@ -492,7 +492,7 @@ sn_receive_chars(struct sn_cons_port *port, unsigned long flags)
                         sysrq_requested = 0;
                         if (ch && time_before(jiffies, sysrq_timeout)) {
                                 spin_unlock_irqrestore(&port->sc_port.lock, flags);
-                                handle_sysrq(ch);
+                                handle_sysrq(ch, NULL);
                                 spin_lock_irqsave(&port->sc_port.lock, flags);
                                 /* ignore actual sysrq command char */
                                 continue;
@@ -551,11 +551,11 @@ static void sn_transmit_chars(struct sn_cons_port *port, int raw)
 	BUG_ON(!port->sc_is_asynch);
 
 	if (port->sc_port.state) {
-		/* We're initialized, using serial core infrastructure */
+		/* We're initilized, using serial core infrastructure */
 		xmit = &port->sc_port.state->xmit;
 	} else {
 		/* Probably sn_sal_switch_to_asynch has been run but serial core isn't
-		 * initialized yet.  Just return.  Writes are going through
+		 * initilized yet.  Just return.  Writes are going through
 		 * sn_sal_console_write (due to register_console) at this time.
 		 */
 		return;

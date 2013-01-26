@@ -18,6 +18,7 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/fs.h>
+#include <linux/tty.h>
 #include <linux/mount.h>
 #include <linux/kdev_t.h>
 #include <linux/major.h>
@@ -46,7 +47,7 @@
 #include <asm/irq_regs.h>
 
 /* Whether we react on sysrq keys or just ignore them */
-static int __read_mostly sysrq_enabled = SYSRQ_DEFAULT_ENABLE;
+static int __read_mostly sysrq_enabled = 1;
 static bool __read_mostly sysrq_always_enabled;
 
 static bool sysrq_on(void)
@@ -75,7 +76,7 @@ static int __init sysrq_always_enabled_setup(char *str)
 __setup("sysrq_always_enabled", sysrq_always_enabled_setup);
 
 
-static void sysrq_handle_loglevel(int key)
+static void sysrq_handle_loglevel(int key, struct tty_struct *tty)
 {
 	int i;
 
@@ -92,7 +93,7 @@ static struct sysrq_key_op sysrq_loglevel_op = {
 };
 
 #ifdef CONFIG_VT
-static void sysrq_handle_SAK(int key)
+static void sysrq_handle_SAK(int key, struct tty_struct *tty)
 {
 	struct work_struct *SAK_work = &vc_cons[fg_console].SAK_work;
 	schedule_work(SAK_work);
@@ -108,7 +109,7 @@ static struct sysrq_key_op sysrq_SAK_op = {
 #endif
 
 #ifdef CONFIG_VT
-static void sysrq_handle_unraw(int key)
+static void sysrq_handle_unraw(int key, struct tty_struct *tty)
 {
 	struct kbd_struct *kbd = &kbd_table[fg_console];
 
@@ -125,7 +126,7 @@ static struct sysrq_key_op sysrq_unraw_op = {
 #define sysrq_unraw_op (*(struct sysrq_key_op *)NULL)
 #endif /* CONFIG_VT */
 
-static void sysrq_handle_crash(int key)
+static void sysrq_handle_crash(int key, struct tty_struct *tty)
 {
 	char *killer = NULL;
 
@@ -140,7 +141,7 @@ static struct sysrq_key_op sysrq_crash_op = {
 	.enable_mask	= SYSRQ_ENABLE_DUMP,
 };
 
-static void sysrq_handle_reboot(int key)
+static void sysrq_handle_reboot(int key, struct tty_struct *tty)
 {
 	lockdep_off();
 	local_irq_enable();
@@ -153,7 +154,7 @@ static struct sysrq_key_op sysrq_reboot_op = {
 	.enable_mask	= SYSRQ_ENABLE_BOOT,
 };
 
-static void sysrq_handle_sync(int key)
+static void sysrq_handle_sync(int key, struct tty_struct *tty)
 {
 	emergency_sync();
 }
@@ -164,7 +165,7 @@ static struct sysrq_key_op sysrq_sync_op = {
 	.enable_mask	= SYSRQ_ENABLE_SYNC,
 };
 
-static void sysrq_handle_show_timers(int key)
+static void sysrq_handle_show_timers(int key, struct tty_struct *tty)
 {
 	sysrq_timer_list_show();
 }
@@ -175,7 +176,7 @@ static struct sysrq_key_op sysrq_show_timers_op = {
 	.action_msg	= "Show clockevent devices & pending hrtimers (no others)",
 };
 
-static void sysrq_handle_mountro(int key)
+static void sysrq_handle_mountro(int key, struct tty_struct *tty)
 {
 	emergency_remount();
 }
@@ -187,7 +188,7 @@ static struct sysrq_key_op sysrq_mountro_op = {
 };
 
 #ifdef CONFIG_LOCKDEP
-static void sysrq_handle_showlocks(int key)
+static void sysrq_handle_showlocks(int key, struct tty_struct *tty)
 {
 	debug_show_all_locks();
 }
@@ -225,7 +226,7 @@ static void sysrq_showregs_othercpus(struct work_struct *dummy)
 
 static DECLARE_WORK(sysrq_showallcpus, sysrq_showregs_othercpus);
 
-static void sysrq_handle_showallcpus(int key)
+static void sysrq_handle_showallcpus(int key, struct tty_struct *tty)
 {
 	/*
 	 * Fall back to the workqueue based printing if the
@@ -251,7 +252,7 @@ static struct sysrq_key_op sysrq_showallcpus_op = {
 };
 #endif
 
-static void sysrq_handle_showregs(int key)
+static void sysrq_handle_showregs(int key, struct tty_struct *tty)
 {
 	struct pt_regs *regs = get_irq_regs();
 	if (regs)
@@ -265,7 +266,7 @@ static struct sysrq_key_op sysrq_showregs_op = {
 	.enable_mask	= SYSRQ_ENABLE_DUMP,
 };
 
-static void sysrq_handle_showstate(int key)
+static void sysrq_handle_showstate(int key, struct tty_struct *tty)
 {
 	show_state();
 }
@@ -276,7 +277,7 @@ static struct sysrq_key_op sysrq_showstate_op = {
 	.enable_mask	= SYSRQ_ENABLE_DUMP,
 };
 
-static void sysrq_handle_showstate_blocked(int key)
+static void sysrq_handle_showstate_blocked(int key, struct tty_struct *tty)
 {
 	show_state_filter(TASK_UNINTERRUPTIBLE);
 }
@@ -290,7 +291,7 @@ static struct sysrq_key_op sysrq_showstate_blocked_op = {
 #ifdef CONFIG_TRACING
 #include <linux/ftrace.h>
 
-static void sysrq_ftrace_dump(int key)
+static void sysrq_ftrace_dump(int key, struct tty_struct *tty)
 {
 	ftrace_dump(DUMP_ALL);
 }
@@ -304,9 +305,9 @@ static struct sysrq_key_op sysrq_ftrace_dump_op = {
 #define sysrq_ftrace_dump_op (*(struct sysrq_key_op *)NULL)
 #endif
 
-static void sysrq_handle_showmem(int key)
+static void sysrq_handle_showmem(int key, struct tty_struct *tty)
 {
-	show_mem(0);
+	show_mem();
 }
 static struct sysrq_key_op sysrq_showmem_op = {
 	.handler	= sysrq_handle_showmem,
@@ -329,7 +330,7 @@ static void send_sig_all(int sig)
 	}
 }
 
-static void sysrq_handle_term(int key)
+static void sysrq_handle_term(int key, struct tty_struct *tty)
 {
 	send_sig_all(SIGTERM);
 	console_loglevel = 8;
@@ -348,7 +349,7 @@ static void moom_callback(struct work_struct *ignored)
 
 static DECLARE_WORK(moom_work, moom_callback);
 
-static void sysrq_handle_moom(int key)
+static void sysrq_handle_moom(int key, struct tty_struct *tty)
 {
 	schedule_work(&moom_work);
 }
@@ -360,7 +361,7 @@ static struct sysrq_key_op sysrq_moom_op = {
 };
 
 #ifdef CONFIG_BLOCK
-static void sysrq_handle_thaw(int key)
+static void sysrq_handle_thaw(int key, struct tty_struct *tty)
 {
 	emergency_thaw_all();
 }
@@ -372,7 +373,7 @@ static struct sysrq_key_op sysrq_thaw_op = {
 };
 #endif
 
-static void sysrq_handle_kill(int key)
+static void sysrq_handle_kill(int key, struct tty_struct *tty)
 {
 	send_sig_all(SIGKILL);
 	console_loglevel = 8;
@@ -384,7 +385,7 @@ static struct sysrq_key_op sysrq_kill_op = {
 	.enable_mask	= SYSRQ_ENABLE_SIGNAL,
 };
 
-static void sysrq_handle_unrt(int key)
+static void sysrq_handle_unrt(int key, struct tty_struct *tty)
 {
 	normalize_rt_tasks();
 }
@@ -492,7 +493,7 @@ static void __sysrq_put_key_op(int key, struct sysrq_key_op *op_p)
                 sysrq_key_table[i] = op_p;
 }
 
-void __handle_sysrq(int key, bool check_mask)
+void __handle_sysrq(int key, struct tty_struct *tty, int check_mask)
 {
 	struct sysrq_key_op *op_p;
 	int orig_log_level;
@@ -519,7 +520,7 @@ void __handle_sysrq(int key, bool check_mask)
 		if (!check_mask || sysrq_on_mask(op_p->enable_mask)) {
 			printk("%s\n", op_p->action_msg);
 			console_loglevel = orig_log_level;
-			op_p->handler(key);
+			op_p->handler(key, tty);
 		} else {
 			printk("This sysrq operation is disabled.\n");
 		}
@@ -544,17 +545,17 @@ void __handle_sysrq(int key, bool check_mask)
 	spin_unlock_irqrestore(&sysrq_key_table_lock, flags);
 }
 
-void handle_sysrq(int key)
+void handle_sysrq(int key, struct tty_struct *tty)
 {
 	if (sysrq_on())
-		__handle_sysrq(key, true);
+		__handle_sysrq(key, tty, 1);
 }
 EXPORT_SYMBOL(handle_sysrq);
 
 #ifdef CONFIG_INPUT
 
 /* Simple translation table for the SysRq keys */
-static const unsigned char sysrq_xlate[KEY_CNT] =
+static const unsigned char sysrq_xlate[KEY_MAX + 1] =
         "\000\0331234567890-=\177\t"                    /* 0x00 - 0x0f */
         "qwertyuiop[]\r\000as"                          /* 0x10 - 0x1f */
         "dfghjkl;'`\000\\zxcv"                          /* 0x20 - 0x2f */
@@ -563,173 +564,73 @@ static const unsigned char sysrq_xlate[KEY_CNT] =
         "230\177\000\000\213\214\000\000\000\000\000\000\000\000\000\000" /* 0x50 - 0x5f */
         "\r\000/";                                      /* 0x60 - 0x6f */
 
-struct sysrq_state {
-	struct input_handle handle;
-	struct work_struct reinject_work;
-	unsigned long key_down[BITS_TO_LONGS(KEY_CNT)];
-	unsigned int alt;
-	unsigned int alt_use;
-	bool active;
-	bool need_reinject;
-	bool reinjecting;
-};
+static bool sysrq_down;
+static int sysrq_alt_use;
+static int sysrq_alt;
 
-static void sysrq_reinject_alt_sysrq(struct work_struct *work)
+static bool sysrq_filter(struct input_handle *handle, unsigned int type,
+		         unsigned int code, int value)
 {
-	struct sysrq_state *sysrq =
-			container_of(work, struct sysrq_state, reinject_work);
-	struct input_handle *handle = &sysrq->handle;
-	unsigned int alt_code = sysrq->alt_use;
+	if (type != EV_KEY)
+		goto out;
 
-	if (sysrq->need_reinject) {
-		/* we do not want the assignment to be reordered */
-		sysrq->reinjecting = true;
-		mb();
+	switch (code) {
 
-		/* Simulate press and release of Alt + SysRq */
-		input_inject_event(handle, EV_KEY, alt_code, 1);
-		input_inject_event(handle, EV_KEY, KEY_SYSRQ, 1);
-		input_inject_event(handle, EV_SYN, SYN_REPORT, 1);
+	case KEY_LEFTALT:
+	case KEY_RIGHTALT:
+		if (value)
+			sysrq_alt = code;
+		else {
+			if (sysrq_down && code == sysrq_alt_use)
+				sysrq_down = false;
 
-		input_inject_event(handle, EV_KEY, KEY_SYSRQ, 0);
-		input_inject_event(handle, EV_KEY, alt_code, 0);
-		input_inject_event(handle, EV_SYN, SYN_REPORT, 1);
-
-		mb();
-		sysrq->reinjecting = false;
-	}
-}
-
-static bool sysrq_filter(struct input_handle *handle,
-			 unsigned int type, unsigned int code, int value)
-{
-	struct sysrq_state *sysrq = handle->private;
-	bool was_active = sysrq->active;
-	bool suppress;
-
-	/*
-	 * Do not filter anything if we are in the process of re-injecting
-	 * Alt+SysRq combination.
-	 */
-	if (sysrq->reinjecting)
-		return false;
-
-	switch (type) {
-
-	case EV_SYN:
-		suppress = false;
+			sysrq_alt = 0;
+		}
 		break;
 
-	case EV_KEY:
-		switch (code) {
-
-		case KEY_LEFTALT:
-		case KEY_RIGHTALT:
-			if (!value) {
-				/* One of ALTs is being released */
-				if (sysrq->active && code == sysrq->alt_use)
-					sysrq->active = false;
-
-				sysrq->alt = KEY_RESERVED;
-
-			} else if (value != 2) {
-				sysrq->alt = code;
-				sysrq->need_reinject = false;
-			}
-			break;
-
-		case KEY_SYSRQ:
-			if (value == 1 && sysrq->alt != KEY_RESERVED) {
-				sysrq->active = true;
-				sysrq->alt_use = sysrq->alt;
-				/*
-				 * If nothing else will be pressed we'll need
-				 * to re-inject Alt-SysRq keysroke.
-				 */
-				sysrq->need_reinject = true;
-			}
-
-			/*
-			 * Pretend that sysrq was never pressed at all. This
-			 * is needed to properly handle KGDB which will try
-			 * to release all keys after exiting debugger. If we
-			 * do not clear key bit it KGDB will end up sending
-			 * release events for Alt and SysRq, potentially
-			 * triggering print screen function.
-			 */
-			if (sysrq->active)
-				clear_bit(KEY_SYSRQ, handle->dev->key);
-
-			break;
-
-		default:
-			if (sysrq->active && value && value != 2) {
-				sysrq->need_reinject = false;
-				__handle_sysrq(sysrq_xlate[code], true);
-			}
-			break;
-		}
-
-		suppress = sysrq->active;
-
-		if (!sysrq->active) {
-			/*
-			 * If we are not suppressing key presses keep track of
-			 * keyboard state so we can release keys that have been
-			 * pressed before entering SysRq mode.
-			 */
-			if (value)
-				set_bit(code, sysrq->key_down);
-			else
-				clear_bit(code, sysrq->key_down);
-
-			if (was_active)
-				schedule_work(&sysrq->reinject_work);
-
-		} else if (value == 0 &&
-			   test_and_clear_bit(code, sysrq->key_down)) {
-			/*
-			 * Pass on release events for keys that was pressed before
-			 * entering SysRq mode.
-			 */
-			suppress = false;
+	case KEY_SYSRQ:
+		if (value == 1 && sysrq_alt) {
+			sysrq_down = true;
+			sysrq_alt_use = sysrq_alt;
 		}
 		break;
 
 	default:
-		suppress = sysrq->active;
+		if (sysrq_down && value && value != 2)
+			__handle_sysrq(sysrq_xlate[code], NULL, 1);
 		break;
 	}
 
-	return suppress;
+out:
+	return sysrq_down;
 }
 
 static int sysrq_connect(struct input_handler *handler,
 			 struct input_dev *dev,
 			 const struct input_device_id *id)
 {
-	struct sysrq_state *sysrq;
+	struct input_handle *handle;
 	int error;
 
-	sysrq = kzalloc(sizeof(struct sysrq_state), GFP_KERNEL);
-	if (!sysrq)
+	sysrq_down = false;
+	sysrq_alt = 0;
+
+	handle = kzalloc(sizeof(struct input_handle), GFP_KERNEL);
+	if (!handle)
 		return -ENOMEM;
 
-	INIT_WORK(&sysrq->reinject_work, sysrq_reinject_alt_sysrq);
+	handle->dev = dev;
+	handle->handler = handler;
+	handle->name = "sysrq";
 
-	sysrq->handle.dev = dev;
-	sysrq->handle.handler = handler;
-	sysrq->handle.name = "sysrq";
-	sysrq->handle.private = sysrq;
-
-	error = input_register_handle(&sysrq->handle);
+	error = input_register_handle(handle);
 	if (error) {
 		pr_err("Failed to register input sysrq handler, error %d\n",
 			error);
 		goto err_free;
 	}
 
-	error = input_open_device(&sysrq->handle);
+	error = input_open_device(handle);
 	if (error) {
 		pr_err("Failed to open input device, error %d\n", error);
 		goto err_unregister;
@@ -738,25 +639,22 @@ static int sysrq_connect(struct input_handler *handler,
 	return 0;
 
  err_unregister:
-	input_unregister_handle(&sysrq->handle);
+	input_unregister_handle(handle);
  err_free:
-	kfree(sysrq);
+	kfree(handle);
 	return error;
 }
 
 static void sysrq_disconnect(struct input_handle *handle)
 {
-	struct sysrq_state *sysrq = handle->private;
-
 	input_close_device(handle);
-	cancel_work_sync(&sysrq->reinject_work);
 	input_unregister_handle(handle);
-	kfree(sysrq);
+	kfree(handle);
 }
 
 /*
- * We are matching on KEY_LEFTALT instead of KEY_SYSRQ because not all
- * keyboards have SysRq key predefined and so user may add it to keymap
+ * We are matching on KEY_LEFTALT insteard of KEY_SYSRQ because not all
+ * keyboards have SysRq ikey predefined and so user may add it to keymap
  * later, but we expect all such keyboards to have left alt.
  */
 static const struct input_device_id sysrq_ids[] = {
@@ -867,7 +765,7 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 
 		if (get_user(c, buf))
 			return -EFAULT;
-		__handle_sysrq(c, false);
+		__handle_sysrq(c, NULL, 0);
 	}
 
 	return count;
@@ -875,7 +773,6 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 
 static const struct file_operations proc_sysrq_trigger_operations = {
 	.write		= write_sysrq_trigger,
-	.llseek		= noop_llseek,
 };
 
 static void sysrq_init_procfs(void)

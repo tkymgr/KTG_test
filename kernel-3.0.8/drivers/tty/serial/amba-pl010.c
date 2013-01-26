@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/char/amba.c
+ *
  *  Driver for AMBA serial ports
  *
  *  Based on drivers/char/serial.c, by Linus Torvalds, Theodore Ts'o.
@@ -470,9 +472,14 @@ pl010_set_termios(struct uart_port *port, struct ktermios *termios,
 	spin_unlock_irqrestore(&uap->port.lock, flags);
 }
 
-static void pl010_set_ldisc(struct uart_port *port, int new)
+static void pl010_set_ldisc(struct uart_port *port)
 {
-	if (new == N_PPS) {
+	int line = port->line;
+
+	if (line >= port->state->port.tty->driver->num)
+		return;
+
+	if (port->state->port.tty->ldisc->ops->num == N_PPS) {
 		port->flags |= UPF_HARDPPS_CD;
 		pl010_enable_ms(port);
 	} else
@@ -674,7 +681,7 @@ static struct uart_driver amba_reg = {
 	.cons			= AMBA_CONSOLE,
 };
 
-static int pl010_probe(struct amba_device *dev, const struct amba_id *id)
+static int pl010_probe(struct amba_device *dev, struct amba_id *id)
 {
 	struct uart_amba_port *uap;
 	void __iomem *base;
@@ -775,7 +782,7 @@ static int pl010_resume(struct amba_device *dev)
 	return 0;
 }
 
-static struct amba_id pl010_ids[] = {
+static struct amba_id pl010_ids[] __initdata = {
 	{
 		.id	= 0x00041010,
 		.mask	= 0x000fffff,

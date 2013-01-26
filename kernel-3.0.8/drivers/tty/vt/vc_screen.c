@@ -1,4 +1,6 @@
 /*
+ * linux/drivers/char/vc_screen.c
+ *
  * Provide access to virtual console memory.
  * /dev/vcs0: the screen as it is being viewed right now (possibly scrolled)
  * /dev/vcsN: the screen of /dev/ttyN (1 <= N <= 63)
@@ -26,17 +28,13 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/init.h>
+#include <linux/mutex.h>
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
 #include <linux/kbd_kern.h>
 #include <linux/console.h>
 #include <linux/device.h>
-#include <linux/sched.h>
-#include <linux/fs.h>
-#include <linux/poll.h>
-#include <linux/signal.h>
-#include <linux/slab.h>
-#include <linux/notifier.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 #include <asm/byteorder.h>
@@ -47,127 +45,21 @@
 #undef addr
 #define HEADER_SIZE	4
 
-#define CON_BUF_SIZE (CONFIG_BASE_SMALL ? 256 : PAGE_SIZE)
-
-struct vcs_poll_data {
-	struct notifier_block notifier;
-	unsigned int cons_num;
-	bool seen_last_update;
-	wait_queue_head_t waitq;
-	struct fasync_struct *fasync;
-};
-
-static int
-vcs_notifier(struct notifier_block *nb, unsigned long code, void *_param)
-{
-	struct vt_notifier_param *param = _param;
-	struct vc_data *vc = param->vc;
-	struct vcs_poll_data *poll =
-		container_of(nb, struct vcs_poll_data, notifier);
-	int currcons = poll->cons_num;
-
-	if (code != VT_UPDATE)
-		return NOTIFY_DONE;
-
-	if (currcons == 0)
-		currcons = fg_console;
-	else
-		currcons--;
-	if (currcons != vc->vc_num)
-		return NOTIFY_DONE;
-
-	poll->seen_last_update = false;
-	wake_up_interruptible(&poll->waitq);
-	kill_fasync(&poll->fasync, SIGIO, POLL_IN);
-	return NOTIFY_OK;
-}
-
-static void
-vcs_poll_data_free(struct vcs_poll_data *poll)
-{
-	unregister_vt_notifier(&poll->notifier);
-	kfree(poll);
-}
-
-static struct vcs_poll_data *
-vcs_poll_data_get(struct file *file)
-{
-	struct vcs_poll_data *poll = file->private_data;
-
-	if (poll)
-		return poll;
-
-	poll = kzalloc(sizeof(*poll), GFP_KERNEL);
-	if (!poll)
-		return NULL;
-	poll->cons_num = iminor(file->f_path.dentry->d_inode) & 127;
-	init_waitqueue_head(&poll->waitq);
-	poll->notifier.notifier_call = vcs_notifier;
-	if (register_vt_notifier(&poll->notifier) != 0) {
-		kfree(poll);
-		return NULL;
-	}
-
-	/*
-	 * This code may be called either through ->poll() or ->fasync().
-	 * If we have two threads using the same file descriptor, they could
-	 * both enter this function, both notice that the structure hasn't
-	 * been allocated yet and go ahead allocating it in parallel, but
-	 * only one of them must survive and be shared otherwise we'd leak
-	 * memory with a dangling notifier callback.
-	 */
-	spin_lock(&file->f_lock);
-	if (!file->private_data) {
-		file->private_data = poll;
-	} else {
-		/* someone else raced ahead of us */
-		vcs_poll_data_free(poll);
-		poll = file->private_data;
-	}
-	spin_unlock(&file->f_lock);
-
-	return poll;
-}
-
-/*
- * Returns VC for inode.
- * Must be called with console_lock.
- */
-static struct vc_data*
-vcs_vc(struct inode *inode, int *viewed)
-{
-	unsigned int currcons = iminor(inode) & 127;
-
-	WARN_CONSOLE_UNLOCKED();
-
-	if (currcons == 0) {
-		currcons = fg_console;
-		if (viewed)
-			*viewed = 1;
-	} else {
-		currcons--;
-		if (viewed)
-			*viewed = 0;
-	}
-	return vc_cons[currcons].d;
-}
-
-/*
- * Returns size for VC carried by inode.
- * Must be called with console_lock.
- */
 static int
 vcs_size(struct inode *inode)
 {
 	int size;
 	int minor = iminor(inode);
+	int currcons = minor & 127;
 	struct vc_data *vc;
 
-	WARN_CONSOLE_UNLOCKED();
-
-	vc = vcs_vc(inode, NULL);
-	if (!vc)
+	if (currcons == 0)
+		currcons = fg_console;
+	else
+		currcons--;
+	if (!vc_cons_allocated(currcons))
 		return -ENXIO;
+	vc = vc_cons[currcons].d;
 
 	size = vc->vc_rows * vc->vc_cols;
 
@@ -180,13 +72,11 @@ static loff_t vcs_lseek(struct file *file, loff_t offset, int orig)
 {
 	int size;
 
-	console_lock();
+	mutex_lock(&con_buf_mtx);
 	size = vcs_size(file->f_path.dentry->d_inode);
-	console_unlock();
-	if (size < 0)
-		return size;
 	switch (orig) {
 		default:
+			mutex_unlock(&con_buf_mtx);
 			return -EINVAL;
 		case 2:
 			offset += size;
@@ -197,9 +87,11 @@ static loff_t vcs_lseek(struct file *file, loff_t offset, int orig)
 			break;
 	}
 	if (offset < 0 || offset > size) {
+		mutex_unlock(&con_buf_mtx);
 		return -EINVAL;
 	}
 	file->f_pos = offset;
+	mutex_unlock(&con_buf_mtx);
 	return file->f_pos;
 }
 
@@ -210,37 +102,38 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	struct inode *inode = file->f_path.dentry->d_inode;
 	unsigned int currcons = iminor(inode);
 	struct vc_data *vc;
-	struct vcs_poll_data *poll;
 	long pos;
-	long attr, read;
-	int col, maxcol, viewed;
+	long viewed, attr, read;
+	int col, maxcol;
 	unsigned short *org = NULL;
 	ssize_t ret;
-	char *con_buf;
 
-	con_buf = (char *) __get_free_page(GFP_KERNEL);
-	if (!con_buf)
-		return -ENOMEM;
+	mutex_lock(&con_buf_mtx);
 
 	pos = *ppos;
 
 	/* Select the proper current console and verify
 	 * sanity of the situation under the console lock.
 	 */
-	console_lock();
+	acquire_console_sem();
 
 	attr = (currcons & 128);
+	currcons = (currcons & 127);
+	if (currcons == 0) {
+		currcons = fg_console;
+		viewed = 1;
+	} else {
+		currcons--;
+		viewed = 0;
+	}
 	ret = -ENXIO;
-	vc = vcs_vc(inode, &viewed);
-	if (!vc)
+	if (!vc_cons_allocated(currcons))
 		goto unlock_out;
+	vc = vc_cons[currcons].d;
 
 	ret = -EINVAL;
 	if (pos < 0)
 		goto unlock_out;
-	poll = file->private_data;
-	if (count && poll)
-		poll->seen_last_update = true;
 	read = 0;
 	ret = 0;
 	while (count) {
@@ -254,12 +147,6 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 		 * could sleep.
 		 */
 		size = vcs_size(inode);
-		if (size < 0) {
-			if (read)
-				break;
-			ret = size;
-			goto unlock_out;
-		}
 		if (pos >= size)
 			break;
 		if (count > size - pos)
@@ -359,9 +246,9 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 		 * the pagefault handling code may want to call printk().
 		 */
 
-		console_unlock();
+		release_console_sem();
 		ret = copy_to_user(buf, con_buf_start, orig_count);
-		console_lock();
+		acquire_console_sem();
 
 		if (ret) {
 			read += (orig_count - ret);
@@ -377,8 +264,8 @@ vcs_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	if (read)
 		ret = read;
 unlock_out:
-	console_unlock();
-	free_page((unsigned long) con_buf);
+	release_console_sem();
+	mutex_unlock(&con_buf_mtx);
 	return ret;
 }
 
@@ -389,29 +276,35 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 	unsigned int currcons = iminor(inode);
 	struct vc_data *vc;
 	long pos;
-	long attr, size, written;
+	long viewed, attr, size, written;
 	char *con_buf0;
-	int col, maxcol, viewed;
+	int col, maxcol;
 	u16 *org0 = NULL, *org = NULL;
 	size_t ret;
-	char *con_buf;
 
-	con_buf = (char *) __get_free_page(GFP_KERNEL);
-	if (!con_buf)
-		return -ENOMEM;
+	mutex_lock(&con_buf_mtx);
 
 	pos = *ppos;
 
 	/* Select the proper current console and verify
 	 * sanity of the situation under the console lock.
 	 */
-	console_lock();
+	acquire_console_sem();
 
 	attr = (currcons & 128);
+	currcons = (currcons & 127);
+
+	if (currcons == 0) {
+		currcons = fg_console;
+		viewed = 1;
+	} else {
+		currcons--;
+		viewed = 0;
+	}
 	ret = -ENXIO;
-	vc = vcs_vc(inode, &viewed);
-	if (!vc)
+	if (!vc_cons_allocated(currcons))
 		goto unlock_out;
+	vc = vc_cons[currcons].d;
 
 	size = vcs_size(inode);
 	ret = -EINVAL;
@@ -431,9 +324,9 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 		/* Temporarily drop the console lock so that we can read
 		 * in the write data from userspace safely.
 		 */
-		console_unlock();
+		release_console_sem();
 		ret = copy_from_user(con_buf, buf, this_round);
-		console_lock();
+		acquire_console_sem();
 
 		if (ret) {
 			this_round -= ret;
@@ -453,12 +346,6 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 		 * Return data written up to now on failure.
 		 */
 		size = vcs_size(inode);
-		if (size < 0) {
-			if (written)
-				break;
-			ret = size;
-			goto unlock_out;
-		}
 		if (pos >= size)
 			break;
 		if (this_round > size - pos)
@@ -561,44 +448,13 @@ vcs_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
 	}
 	*ppos += written;
 	ret = written;
-	if (written)
-		vcs_scr_updated(vc);
 
 unlock_out:
-	console_unlock();
-	free_page((unsigned long) con_buf);
+	release_console_sem();
+
+	mutex_unlock(&con_buf_mtx);
+
 	return ret;
-}
-
-static unsigned int
-vcs_poll(struct file *file, poll_table *wait)
-{
-	struct vcs_poll_data *poll = vcs_poll_data_get(file);
-	int ret = DEFAULT_POLLMASK|POLLERR|POLLPRI;
-
-	if (poll) {
-		poll_wait(file, &poll->waitq, wait);
-		if (poll->seen_last_update)
-			ret = DEFAULT_POLLMASK;
-	}
-	return ret;
-}
-
-static int
-vcs_fasync(int fd, struct file *file, int on)
-{
-	struct vcs_poll_data *poll = file->private_data;
-
-	if (!poll) {
-		/* don't allocate anything if all we want is disable fasync */
-		if (!on)
-			return 0;
-		poll = vcs_poll_data_get(file);
-		if (!poll)
-			return -ENOMEM;
-	}
-
-	return fasync_helper(fd, file, on, &poll->fasync);
 }
 
 static int
@@ -607,30 +463,18 @@ vcs_open(struct inode *inode, struct file *filp)
 	unsigned int currcons = iminor(inode) & 127;
 	int ret = 0;
 	
-	tty_lock();
+	lock_kernel();
 	if(currcons && !vc_cons_allocated(currcons-1))
 		ret = -ENXIO;
-	tty_unlock();
+	unlock_kernel();
 	return ret;
-}
-
-static int vcs_release(struct inode *inode, struct file *file)
-{
-	struct vcs_poll_data *poll = file->private_data;
-
-	if (poll)
-		vcs_poll_data_free(poll);
-	return 0;
 }
 
 static const struct file_operations vcs_fops = {
 	.llseek		= vcs_lseek,
 	.read		= vcs_read,
 	.write		= vcs_write,
-	.poll		= vcs_poll,
-	.fasync		= vcs_fasync,
 	.open		= vcs_open,
-	.release	= vcs_release,
 };
 
 static struct class *vc_class;

@@ -4,6 +4,7 @@
  * Copyright by 
  * Philips Automation Projects
  * Kassel (Germany)
+ * http://www.pap-philips.de
  * -----------------------------------------------------------
  * This software may be used and distributed according to the terms of
  * the GNU General Public License, incorporated herein by reference.
@@ -57,6 +58,7 @@
 #include <linux/ioport.h>
 #include <linux/in.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/tty.h>
 #include <linux/errno.h>
 #include <linux/string.h>	/* used in new tty drivers */
@@ -1065,7 +1067,7 @@ static ssize_t r3964_read(struct tty_struct *tty, struct file *file,
 
 	TRACE_L("read()");
 
-	tty_lock();
+	lock_kernel();
 
 	pClient = findClient(pInfo, task_pid(current));
 	if (pClient) {
@@ -1077,7 +1079,7 @@ static ssize_t r3964_read(struct tty_struct *tty, struct file *file,
 				goto unlock;
 			}
 			/* block until there is a message: */
-			wait_event_interruptible_tty(pInfo->read_wait,
+			wait_event_interruptible(pInfo->read_wait,
 					(pMsg = remove_msg(pInfo, pClient)));
 		}
 
@@ -1107,7 +1109,7 @@ static ssize_t r3964_read(struct tty_struct *tty, struct file *file,
 	}
 	ret = -EPERM;
 unlock:
-	tty_unlock();
+	unlock_kernel();
 	return ret;
 }
 
@@ -1156,7 +1158,7 @@ static ssize_t r3964_write(struct tty_struct *tty, struct file *file,
 	pHeader->locks = 0;
 	pHeader->owner = NULL;
 
-	tty_lock();
+	lock_kernel();
 
 	pClient = findClient(pInfo, task_pid(current));
 	if (pClient) {
@@ -1175,7 +1177,7 @@ static ssize_t r3964_write(struct tty_struct *tty, struct file *file,
 	add_tx_queue(pInfo, pHeader);
 	trigger_transmit(pInfo);
 
-	tty_unlock();
+	unlock_kernel();
 
 	return 0;
 }

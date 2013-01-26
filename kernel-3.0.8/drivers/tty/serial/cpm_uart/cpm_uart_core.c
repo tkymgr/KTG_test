@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/serial/cpm_uart.c
+ *
  *  Driver for CPM (SCC/SMC) serial ports; core driver
  *
  *  Based on arch/ppc/cpm2_io/uart.c by Dan Malek
@@ -69,8 +71,6 @@ static void cpm_uart_init_scc(struct uart_cpm_port *pinfo);
 static void cpm_uart_initbd(struct uart_cpm_port *pinfo);
 
 /**************************************************************/
-
-#define HW_BUF_SPD_THRESHOLD    9600
 
 /*
  * Check, if transmit buffers are processed
@@ -503,11 +503,6 @@ static void cpm_uart_set_termios(struct uart_port *port,
 	pr_debug("CPM uart[%d]:set_termios\n", port->line);
 
 	baud = uart_get_baud_rate(port, termios, old, 0, port->uartclk / 16);
-	if (baud <= HW_BUF_SPD_THRESHOLD ||
-	    (pinfo->port.state && pinfo->port.state->port.tty->low_latency))
-		pinfo->rx_fifosize = 1;
-	else
-		pinfo->rx_fifosize = RX_BUF_SIZE;
 
 	/* Character length programmed into the mode register is the
 	 * sum of: 1 start bit, number of data bits, 0 or 1 parity bit,
@@ -599,17 +594,6 @@ static void cpm_uart_set_termios(struct uart_port *port,
 	 */
 	bits++;
 	if (IS_SMC(pinfo)) {
-		/*
-		 * MRBLR can be changed while an SMC/SCC is operating only
-		 * if it is done in a single bus cycle with one 16-bit move
-		 * (not two 8-bit bus cycles back-to-back). This occurs when
-		 * the cp shifts control to the next RxBD, so the change does
-		 * not take effect immediately. To guarantee the exact RxBD
-		 * on which the change occurs, change MRBLR only while the
-		 * SMC/SCC receiver is disabled.
-		 */
-		out_be16(&pinfo->smcup->smc_mrblr, pinfo->rx_fifosize);
-
 		/* Set the mode register.  We want to keep a copy of the
 		 * enables, because we want to put them back if they were
 		 * present.
@@ -620,7 +604,6 @@ static void cpm_uart_set_termios(struct uart_port *port,
 		out_be16(&smcp->smc_smcmr, smcr_mk_clen(bits) | cval |
 		    SMCMR_SM_UART | prev_mode);
 	} else {
-		out_be16(&pinfo->sccup->scc_genscc.scc_mrblr, pinfo->rx_fifosize);
 		out_be16(&sccp->scc_psmr, (sbits << 12) | scval);
 	}
 
@@ -869,7 +852,7 @@ static void cpm_uart_init_smc(struct uart_cpm_port *pinfo)
 	 */
 	cpm_set_smc_fcr(up);
 
-	/* Using idle character time requires some additional tuning.  */
+	/* Using idle charater time requires some additional tuning.  */
 	out_be16(&up->smc_mrblr, pinfo->rx_fifosize);
 	out_be16(&up->smc_maxidl, pinfo->rx_fifosize);
 	out_be16(&up->smc_brklen, 0);
@@ -1357,7 +1340,8 @@ static struct uart_driver cpm_reg = {
 
 static int probe_index;
 
-static int __devinit cpm_uart_probe(struct platform_device *ofdev)
+static int __devinit cpm_uart_probe(struct of_device *ofdev,
+                                    const struct of_device_id *match)
 {
 	int index = probe_index++;
 	struct uart_cpm_port *pinfo = &cpm_uart_ports[index];
@@ -1380,7 +1364,7 @@ static int __devinit cpm_uart_probe(struct platform_device *ofdev)
 	return uart_add_one_port(&cpm_reg, &pinfo->port);
 }
 
-static int __devexit cpm_uart_remove(struct platform_device *ofdev)
+static int __devexit cpm_uart_remove(struct of_device *ofdev)
 {
 	struct uart_cpm_port *pinfo = dev_get_drvdata(&ofdev->dev);
 	return uart_remove_one_port(&cpm_reg, &pinfo->port);
@@ -1402,7 +1386,7 @@ static struct of_device_id cpm_uart_match[] = {
 	{}
 };
 
-static struct platform_driver cpm_uart_driver = {
+static struct of_platform_driver cpm_uart_driver = {
 	.driver = {
 		.name = "cpm_uart",
 		.owner = THIS_MODULE,
@@ -1418,7 +1402,7 @@ static int __init cpm_uart_init(void)
 	if (ret)
 		return ret;
 
-	ret = platform_driver_register(&cpm_uart_driver);
+	ret = of_register_platform_driver(&cpm_uart_driver);
 	if (ret)
 		uart_unregister_driver(&cpm_reg);
 
@@ -1427,7 +1411,7 @@ static int __init cpm_uart_init(void)
 
 static void __exit cpm_uart_exit(void)
 {
-	platform_driver_unregister(&cpm_uart_driver);
+	of_unregister_platform_driver(&cpm_uart_driver);
 	uart_unregister_driver(&cpm_reg);
 }
 

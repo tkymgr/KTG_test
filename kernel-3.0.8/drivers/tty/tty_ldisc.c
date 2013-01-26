@@ -34,6 +34,8 @@
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
 
+#include <linux/smp_lock.h>	/* For the moment */
+
 #include <linux/kmod.h>
 #include <linux/nsproxy.h>
 
@@ -440,8 +442,6 @@ static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
  *
  *	A helper opening method. Also a convenient debugging and check
  *	point.
- *
- *	Locking: always called with BTM already held.
  */
 
 static int tty_ldisc_open(struct tty_struct *tty, struct tty_ldisc *ld)
@@ -449,11 +449,12 @@ static int tty_ldisc_open(struct tty_struct *tty, struct tty_ldisc *ld)
 	WARN_ON(test_and_set_bit(TTY_LDISC_OPEN, &tty->flags));
 	if (ld->ops->open) {
 		int ret;
-                /* BTM here locks versus a hangup event */
-		WARN_ON(!tty_locked());
+                /* BKL here locks verus a hangup event */
+		lock_kernel();
 		ret = ld->ops->open(tty);
 		if (ret)
 			clear_bit(TTY_LDISC_OPEN, &tty->flags);
+		unlock_kernel();
 		return ret;
 	}
 	return 0;
@@ -529,20 +530,7 @@ static void tty_ldisc_restore(struct tty_struct *tty, struct tty_ldisc *old)
 static int tty_ldisc_halt(struct tty_struct *tty)
 {
 	clear_bit(TTY_LDISC, &tty->flags);
-	return cancel_work_sync(&tty->buf.work);
-}
-
-/**
- *	tty_ldisc_flush_works	-	flush all works of a tty
- *	@tty: tty device to flush works for
- *
- *	Sync flush all works belonging to @tty.
- */
-static void tty_ldisc_flush_works(struct tty_struct *tty)
-{
-	flush_work_sync(&tty->hangup_work);
-	flush_work_sync(&tty->SAK_work);
-	flush_work_sync(&tty->buf.work);
+	return cancel_delayed_work_sync(&tty->buf.work);
 }
 
 /**
@@ -555,7 +543,7 @@ static void tty_ldisc_flush_works(struct tty_struct *tty)
 static int tty_ldisc_wait_idle(struct tty_struct *tty)
 {
 	int ret;
-	ret = wait_event_timeout(tty_ldisc_idle,
+	ret = wait_event_interruptible_timeout(tty_ldisc_idle,
 			atomic_read(&tty->ldisc->users) == 1, 5 * HZ);
 	if (ret < 0)
 		return ret;
@@ -586,7 +574,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	if (IS_ERR(new_ldisc))
 		return PTR_ERR(new_ldisc);
 
-	tty_lock();
+	lock_kernel();
 	/*
 	 *	We need to look at the tty locking here for pty/tty pairs
 	 *	when both sides try to change in parallel.
@@ -600,12 +588,12 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	 */
 
 	if (tty->ldisc->ops->num == ldisc) {
-		tty_unlock();
+		unlock_kernel();
 		tty_ldisc_put(new_ldisc);
 		return 0;
 	}
 
-	tty_unlock();
+	unlock_kernel();
 	/*
 	 *	Problem: What do we do if this blocks ?
 	 *	We could deadlock here
@@ -613,7 +601,6 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 
 	tty_wait_until_sent(tty, 0);
 
-	tty_lock();
 	mutex_lock(&tty->ldisc_mutex);
 
 	/*
@@ -623,12 +610,12 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 
 	while (test_bit(TTY_LDISC_CHANGING, &tty->flags)) {
 		mutex_unlock(&tty->ldisc_mutex);
-		tty_unlock();
 		wait_event(tty_ldisc_wait,
 			test_bit(TTY_LDISC_CHANGING, &tty->flags) == 0);
-		tty_lock();
 		mutex_lock(&tty->ldisc_mutex);
 	}
+
+	lock_kernel();
 
 	set_bit(TTY_LDISC_CHANGING, &tty->flags);
 
@@ -641,7 +628,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 
 	o_ldisc = tty->ldisc;
 
-	tty_unlock();
+	unlock_kernel();
 	/*
 	 *	Make sure we don't change while someone holds a
 	 *	reference to the line discipline. The TTY_LDISC bit
@@ -664,12 +651,12 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 
 	mutex_unlock(&tty->ldisc_mutex);
 
-	tty_ldisc_flush_works(tty);
+	flush_scheduled_work();
 
 	retval = tty_ldisc_wait_idle(tty);
 
-	tty_lock();
 	mutex_lock(&tty->ldisc_mutex);
+	lock_kernel();
 
 	/* handle wait idle failure locked */
 	if (retval) {
@@ -683,7 +670,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 		clear_bit(TTY_LDISC_CHANGING, &tty->flags);
 		mutex_unlock(&tty->ldisc_mutex);
 		tty_ldisc_put(new_ldisc);
-		tty_unlock();
+		unlock_kernel();
 		return -EIO;
 	}
 
@@ -722,11 +709,11 @@ enable:
 	/* Restart the work queue in case no characters kick it off. Safe if
 	   already running */
 	if (work)
-		schedule_work(&tty->buf.work);
+		schedule_delayed_work(&tty->buf.work, 1);
 	if (o_work)
-		schedule_work(&o_tty->buf.work);
+		schedule_delayed_work(&o_tty->buf.work, 1);
 	mutex_unlock(&tty->ldisc_mutex);
-	tty_unlock();
+	unlock_kernel();
 	return retval;
 }
 
@@ -762,8 +749,6 @@ static int tty_ldisc_reinit(struct tty_struct *tty, int ldisc)
 
 	if (IS_ERR(ld))
 		return -1;
-
-	WARN_ON_ONCE(tty_ldisc_wait_idle(tty));
 
 	tty_ldisc_close(tty, tty->ldisc);
 	tty_ldisc_put(tty->ldisc);
@@ -829,20 +814,7 @@ void tty_ldisc_hangup(struct tty_struct *tty)
 	 * Avoid racing set_ldisc or tty_ldisc_release
 	 */
 	mutex_lock(&tty->ldisc_mutex);
-
-	/*
-	 * this is like tty_ldisc_halt, but we need to give up
-	 * the BTM before calling cancel_work_sync, which may
-	 * need to wait for another function taking the BTM
-	 */
-	clear_bit(TTY_LDISC, &tty->flags);
-	tty_unlock();
-	cancel_work_sync(&tty->buf.work);
-	mutex_unlock(&tty->ldisc_mutex);
-
-	tty_lock();
-	mutex_lock(&tty->ldisc_mutex);
-
+	tty_ldisc_halt(tty);
 	/* At this point we have a closed ldisc and we want to
 	   reopen it. We could defer this to the next open but
 	   it means auditing a lot of other paths so this is
@@ -916,10 +888,8 @@ void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty)
 	 * race with the set_ldisc code path.
 	 */
 
-	tty_unlock();
 	tty_ldisc_halt(tty);
-	tty_ldisc_flush_works(tty);
-	tty_lock();
+	flush_scheduled_work();
 
 	mutex_lock(&tty->ldisc_mutex);
 	/*
@@ -956,19 +926,6 @@ void tty_ldisc_init(struct tty_struct *tty)
 	if (IS_ERR(ld))
 		panic("n_tty: init_tty");
 	tty_ldisc_assign(tty, ld);
-}
-
-/**
- *	tty_ldisc_init		-	ldisc cleanup for new tty
- *	@tty: tty that was allocated recently
- *
- *	The tty structure must not becompletely set up (tty_ldisc_setup) when
- *      this call is made.
- */
-void tty_ldisc_deinit(struct tty_struct *tty)
-{
-	put_ldisc(tty->ldisc);
-	tty_ldisc_assign(tty, NULL);
 }
 
 void tty_ldisc_begin(void)

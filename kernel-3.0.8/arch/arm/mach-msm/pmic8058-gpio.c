@@ -616,6 +616,7 @@ static ssize_t debug_write(struct file *file, const char __user *buf,
 	int gpio = *((int *) file->private_data);
 	unsigned long val;
 	int mode;
+	int ret;
 
 	mode = (pm8058_gpio_chip.bank1[gpio] & PM8058_GPIO_MODE_MASK) >>
 		PM8058_GPIO_MODE_SHIFT;
@@ -631,7 +632,7 @@ static ssize_t debug_write(struct file *file, const char __user *buf,
 	}
 	debug_write_buf[count] = '\0';
 
-	(void) strict_strtoul(debug_write_buf, 10, &val);
+	ret = strict_strtoul(debug_write_buf, 10, &val);
 
 	if (pm8058_gpio_set(&pm8058_gpio_chip, gpio, val)) {
 		pr_err("gpio write failed\n");

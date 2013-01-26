@@ -1,7 +1,7 @@
 /*
  * vio driver interface to hvc_console.c
  *
- * This code was moved here to allow the remaining code to be reused as a
+ * This code was moved here to allow the remaing code to be reused as a
  * generic polling mode with semi-reliable transport driver core to the
  * console and tty subsystems.
  *
@@ -39,7 +39,7 @@
 
 #include "hvc_console.h"
 
-static const char hvc_driver_name[] = "hvc_console";
+char hvc_driver_name[] = "hvc_console";
 
 static struct vio_device_id hvc_driver_table[] __devinitdata = {
 	{"serial", "hvterm1"},

@@ -1,4 +1,5 @@
-/*
+/* linux/drivers/serial/samsuing.c
+ *
  * Driver core for Samsung SoC onboard UARTs.
  *
  * Ben Dooks, Copyright (c) 2003-2008 Simtec Electronics
@@ -63,7 +64,7 @@
 #define tx_enabled(port) ((port)->unused[0])
 #define rx_enabled(port) ((port)->unused[1])
 
-/* flag to ignore all characters coming in */
+/* flag to ignore all characters comming in */
 #define RXSTAT_DUMMY_READ (0x10000000)
 
 static inline struct s3c24xx_uart_port *to_ourport(struct uart_port *port)
@@ -290,7 +291,7 @@ static irqreturn_t s3c24xx_serial_tx_chars(int irq, void *id)
 		goto out;
 	}
 
-	/* if there isn't anything more to transmit, or the uart is now
+	/* if there isnt anything more to transmit, or the uart is now
 	 * stopped, disable the uart and exit
 	*/
 
@@ -704,13 +705,8 @@ static void s3c24xx_serial_set_termios(struct uart_port *port,
 	if (ourport->info->has_divslot) {
 		unsigned int div = ourport->baudclk_rate / baud;
 
-		if (cfg->has_fracval) {
-			udivslot = (div & 15);
-			dbg("fracval = %04x\n", udivslot);
-		} else {
-			udivslot = udivslot_table[div & 15];
-			dbg("udivslot = %04x (div %d)\n", udivslot, div & 15);
-		}
+		udivslot = udivslot_table[div & 15];
+		dbg("udivslot = %04x (div %d)\n", udivslot, div & 15);
 	}
 
 	switch (termios->c_cflag & CSIZE) {
@@ -882,10 +878,10 @@ static struct uart_ops s3c24xx_serial_ops = {
 
 static struct uart_driver s3c24xx_uart_drv = {
 	.owner		= THIS_MODULE,
-	.driver_name	= "s3c2410_serial",
+	.dev_name	= "s3c2410_serial",
 	.nr		= CONFIG_SERIAL_SAMSUNG_UARTS,
 	.cons		= S3C24XX_SERIAL_CONSOLE,
-	.dev_name	= S3C24XX_SERIAL_NAME,
+	.driver_name	= S3C24XX_SERIAL_NAME,
 	.major		= S3C24XX_SERIAL_MAJOR,
 	.minor		= S3C24XX_SERIAL_MINOR,
 };
@@ -1100,7 +1096,7 @@ static int s3c24xx_serial_init_port(struct s3c24xx_uart_port *ourport,
 	dbg("resource %p (%lx..%lx)\n", res, res->start, res->end);
 
 	port->mapbase = res->start;
-	port->membase = S3C_VA_UART + (res->start & 0xfffff);
+	port->membase = S3C_VA_UART + res->start - (S3C_PA_UART & 0xfff00000);
 	ret = platform_get_irq(platdev, 0);
 	if (ret < 0)
 		port->irq = 0;

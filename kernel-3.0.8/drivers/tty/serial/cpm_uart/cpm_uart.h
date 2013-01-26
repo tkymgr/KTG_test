@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/serial/cpm_uart.h
+ *
  *  Driver for CPM (SCC/SMC) serial ports
  *
  *  Copyright (C) 2004 Freescale Semiconductor, Inc.
@@ -74,12 +76,18 @@ struct uart_cpm_port {
 	unsigned char		*tx_buf;
 	unsigned char		*rx_buf;
 	u32			flags;
+	void			(*set_lineif)(struct uart_cpm_port *);
 	struct clk		*clk;
 	u8			brg;
 	uint			 dp_addr;
 	void			*mem_addr;
 	dma_addr_t		 dma_addr;
 	u32			mem_size;
+	/* helpers */
+	int			 baud;
+	int			 bits;
+	/* Keep track of 'odd' SMC2 wirings */
+	int			is_portb;
 	/* wait on close if needed */
 	int			wait_closing;
 	/* value to combine with opcode to form cpm command */
