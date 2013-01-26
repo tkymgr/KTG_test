@@ -824,7 +824,7 @@ static void __init do_pre_smp_initcalls(void)
 static void run_init_process(const char *init_filename)
 {
 	argv_init[0] = init_filename;
-	kernel_execve(init_filename, (char **)argv_init, (char **)envp_init);
+	kernel_execve(init_filename, argv_init, envp_init);
 }
 
 /* This is a non __init function. Force it to be noinline otherwise gcc
