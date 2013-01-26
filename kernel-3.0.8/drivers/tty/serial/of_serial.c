@@ -14,10 +14,10 @@
 #include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/nwpserial.h>
+
+#include <asm/prom.h>
 
 struct of_serial_info {
 	int type;
@@ -27,22 +27,22 @@ struct of_serial_info {
 /*
  * Fill a struct uart_port for a given device node
  */
-static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
+static int __devinit of_platform_serial_setup(struct of_device *ofdev,
 					int type, struct uart_port *port)
 {
 	struct resource resource;
 	struct device_node *np = ofdev->dev.of_node;
-	u32 clk, spd, prop;
-	int ret;
+	const unsigned int *clk, *spd;
+	const u32 *prop;
+	int ret, prop_size;
 
 	memset(port, 0, sizeof *port);
-	if (of_property_read_u32(np, "clock-frequency", &clk)) {
+	spd = of_get_property(np, "current-speed", NULL);
+	clk = of_get_property(np, "clock-frequency", NULL);
+	if (!clk) {
 		dev_warn(&ofdev->dev, "no clock-frequency property set\n");
 		return -ENODEV;
 	}
-	/* If current-speed was set, then try not to change it. */
-	if (of_property_read_u32(np, "current-speed", &spd) == 0)
-		port->custom_divisor = clk / (16 * spd);
 
 	ret = of_address_to_resource(np, 0, &resource);
 	if (ret) {
@@ -54,35 +54,25 @@ static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
 	port->mapbase = resource.start;
 
 	/* Check for shifted address mapping */
-	if (of_property_read_u32(np, "reg-offset", &prop) == 0)
-		port->mapbase += prop;
+	prop = of_get_property(np, "reg-offset", &prop_size);
+	if (prop && (prop_size == sizeof(u32)))
+		port->mapbase += *prop;
 
 	/* Check for registers offset within the devices address range */
-	if (of_property_read_u32(np, "reg-shift", &prop) == 0)
-		port->regshift = prop;
+	prop = of_get_property(np, "reg-shift", &prop_size);
+	if (prop && (prop_size == sizeof(u32)))
+		port->regshift = *prop;
 
 	port->irq = irq_of_parse_and_map(np, 0);
 	port->iotype = UPIO_MEM;
-	if (of_property_read_u32(np, "reg-io-width", &prop) == 0) {
-		switch (prop) {
-		case 1:
-			port->iotype = UPIO_MEM;
-			break;
-		case 4:
-			port->iotype = UPIO_MEM32;
-			break;
-		default:
-			dev_warn(&ofdev->dev, "unsupported reg-io-width (%d)\n",
-				 prop);
-			return -EINVAL;
-		}
-	}
-
 	port->type = type;
-	port->uartclk = clk;
+	port->uartclk = *clk;
 	port->flags = UPF_SHARE_IRQ | UPF_BOOT_AUTOCONF | UPF_IOREMAP
 		| UPF_FIXED_PORT | UPF_FIXED_TYPE;
 	port->dev = &ofdev->dev;
+	/* If current-speed was set, then try not to change it. */
+	if (spd)
+		port->custom_divisor = *clk / (16 * (*spd));
 
 	return 0;
 }
@@ -90,18 +80,13 @@ static int __devinit of_platform_serial_setup(struct platform_device *ofdev,
 /*
  * Try to register a serial port
  */
-static struct of_device_id of_platform_serial_table[];
-static int __devinit of_platform_serial_probe(struct platform_device *ofdev)
+static int __devinit of_platform_serial_probe(struct of_device *ofdev,
+						const struct of_device_id *id)
 {
-	const struct of_device_id *match;
 	struct of_serial_info *info;
 	struct uart_port port;
 	int port_type;
 	int ret;
-
-	match = of_match_device(of_platform_serial_table, &ofdev->dev);
-	if (!match)
-		return -EINVAL;
 
 	if (of_find_property(ofdev->dev.of_node, "used-by-rtas", NULL))
 		return -EBUSY;
@@ -110,7 +95,7 @@ static int __devinit of_platform_serial_probe(struct platform_device *ofdev)
 	if (info == NULL)
 		return -ENOMEM;
 
-	port_type = (unsigned long)match->data;
+	port_type = (unsigned long)id->data;
 	ret = of_platform_serial_setup(ofdev, port_type, &port);
 	if (ret)
 		goto out;
@@ -149,7 +134,7 @@ out:
 /*
  * Release a line
  */
-static int of_platform_serial_remove(struct platform_device *ofdev)
+static int of_platform_serial_remove(struct of_device *ofdev)
 {
 	struct of_serial_info *info = dev_get_drvdata(&ofdev->dev);
 	switch (info->type) {
@@ -175,22 +160,21 @@ static int of_platform_serial_remove(struct platform_device *ofdev)
  * A few common types, add more as needed.
  */
 static struct of_device_id __devinitdata of_platform_serial_table[] = {
-	{ .compatible = "ns8250",   .data = (void *)PORT_8250, },
-	{ .compatible = "ns16450",  .data = (void *)PORT_16450, },
-	{ .compatible = "ns16550a", .data = (void *)PORT_16550A, },
-	{ .compatible = "ns16550",  .data = (void *)PORT_16550, },
-	{ .compatible = "ns16750",  .data = (void *)PORT_16750, },
-	{ .compatible = "ns16850",  .data = (void *)PORT_16850, },
-	{ .compatible = "nvidia,tegra20-uart", .data = (void *)PORT_TEGRA, },
+	{ .type = "serial", .compatible = "ns8250",   .data = (void *)PORT_8250, },
+	{ .type = "serial", .compatible = "ns16450",  .data = (void *)PORT_16450, },
+	{ .type = "serial", .compatible = "ns16550a", .data = (void *)PORT_16550A, },
+	{ .type = "serial", .compatible = "ns16550",  .data = (void *)PORT_16550, },
+	{ .type = "serial", .compatible = "ns16750",  .data = (void *)PORT_16750, },
+	{ .type = "serial", .compatible = "ns16850",  .data = (void *)PORT_16850, },
 #ifdef CONFIG_SERIAL_OF_PLATFORM_NWPSERIAL
-	{ .compatible = "ibm,qpace-nwp-serial",
-		.data = (void *)PORT_NWPSERIAL, },
+	{ .type = "serial", .compatible = "ibm,qpace-nwp-serial",
+					.data = (void *)PORT_NWPSERIAL, },
 #endif
-	{ .type = "serial",         .data = (void *)PORT_UNKNOWN, },
+	{ .type = "serial",			      .data = (void *)PORT_UNKNOWN, },
 	{ /* end of list */ },
 };
 
-static struct platform_driver of_platform_serial_driver = {
+static struct of_platform_driver of_platform_serial_driver = {
 	.driver = {
 		.name = "of_serial",
 		.owner = THIS_MODULE,
@@ -202,13 +186,13 @@ static struct platform_driver of_platform_serial_driver = {
 
 static int __init of_platform_serial_init(void)
 {
-	return platform_driver_register(&of_platform_serial_driver);
+	return of_register_platform_driver(&of_platform_serial_driver);
 }
 module_init(of_platform_serial_init);
 
 static void __exit of_platform_serial_exit(void)
 {
-	return platform_driver_unregister(&of_platform_serial_driver);
+	return of_unregister_platform_driver(&of_platform_serial_driver);
 };
 module_exit(of_platform_serial_exit);
 

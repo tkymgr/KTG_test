@@ -1,4 +1,5 @@
-/*
+/* linux/drivers/serial/s5pv210.c
+ *
  * Copyright (c) 2010 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com/
  *
@@ -27,11 +28,7 @@
 static int s5pv210_serial_setsource(struct uart_port *port,
 					struct s3c24xx_uart_clksrc *clk)
 {
-	struct s3c2410_uartcfg *cfg = port->dev->platform_data;
 	unsigned long ucon = rd_regl(port, S3C2410_UCON);
-
-	if (cfg->flags & NO_NEED_CHECK_CLKSRC)
-		return 0;
 
 	if (strcmp(clk->name, "pclk") == 0)
 		ucon &= ~S5PV210_UCON_CLKMASK;
@@ -50,13 +47,9 @@ static int s5pv210_serial_setsource(struct uart_port *port,
 static int s5pv210_serial_getsource(struct uart_port *port,
 					struct s3c24xx_uart_clksrc *clk)
 {
-	struct s3c2410_uartcfg *cfg = port->dev->platform_data;
 	u32 ucon = rd_regl(port, S3C2410_UCON);
 
 	clk->divisor = 1;
-
-	if (cfg->flags & NO_NEED_CHECK_CLKSRC)
-		return 0;
 
 	switch (ucon & S5PV210_UCON_CLKMASK) {
 	case S5PV210_UCON_PCLK:

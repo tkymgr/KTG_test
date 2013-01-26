@@ -403,7 +403,7 @@ static void hvsi_insert_chars(struct hvsi_struct *hp, const char *buf, int len)
 			hp->sysrq = 1;
 			continue;
 		} else if (hp->sysrq) {
-			handle_sysrq(c);
+			handle_sysrq(c, hp->tty);
 			hp->sysrq = 0;
 			continue;
 		}
@@ -850,8 +850,8 @@ static void hvsi_flush_output(struct hvsi_struct *hp)
 	wait_event_timeout(hp->emptyq, (hp->n_outbuf <= 0), HVSI_TIMEOUT);
 
 	/* 'writer' could still be pending if it didn't see n_outbuf = 0 yet */
-	cancel_delayed_work_sync(&hp->writer);
-	flush_work_sync(&hp->handshaker);
+	cancel_delayed_work(&hp->writer);
+	flush_scheduled_work();
 
 	/*
 	 * it's also possible that our timeout expired and hvsi_write_worker
@@ -1095,7 +1095,7 @@ static void hvsi_unthrottle(struct tty_struct *tty)
 	h_vio_signal(hp->vtermno, VIO_IRQ_ENABLE);
 }
 
-static int hvsi_tiocmget(struct tty_struct *tty)
+static int hvsi_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct hvsi_struct *hp = tty->driver_data;
 
@@ -1103,8 +1103,8 @@ static int hvsi_tiocmget(struct tty_struct *tty)
 	return hp->mctrl;
 }
 
-static int hvsi_tiocmset(struct tty_struct *tty,
-				unsigned int set, unsigned int clear)
+static int hvsi_tiocmset(struct tty_struct *tty, struct file *file,
+		unsigned int set, unsigned int clear)
 {
 	struct hvsi_struct *hp = tty->driver_data;
 	unsigned long flags;
@@ -1255,7 +1255,7 @@ static int __init hvsi_console_setup(struct console *console, char *options)
 	return 0;
 }
 
-static struct console hvsi_console = {
+static struct console hvsi_con_driver = {
 	.name		= "hvsi",
 	.write		= hvsi_console_print,
 	.device		= hvsi_console_device,
@@ -1308,7 +1308,7 @@ static int __init hvsi_console_init(void)
 	}
 
 	if (hvsi_count)
-		register_console(&hvsi_console);
+		register_console(&hvsi_con_driver);
 	return 0;
 }
 console_initcall(hvsi_console_init);

@@ -159,6 +159,7 @@ struct m68k_serial {
 	int			xmit_tail;
 	int			xmit_cnt;
 	struct work_struct	tqueue;
+	struct work_struct	tqueue_hangup;
 	wait_queue_head_t	open_wait;
 	wait_queue_head_t	close_wait;
 };
@@ -180,8 +181,13 @@ struct m68k_serial {
 /* 
  * Define the number of ports supported and their irqs.
  */
+#ifndef CONFIG_68328_SERIAL_UART2
 #define NR_PORTS 1
 #define UART_IRQ_DEFNS {UART_IRQ_NUM}
+#else
+#define NR_PORTS 2
+#define UART_IRQ_DEFNS {UART1_IRQ_NUM, UART2_IRQ_NUM}
+#endif
 
 #endif /* __KERNEL__ */
 #endif /* !(_MC683XX_SERIAL_H) */

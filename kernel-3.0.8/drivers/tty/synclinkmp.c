@@ -52,6 +52,7 @@
 #include <linux/mm.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/netdevice.h>
 #include <linux/vmalloc.h>
 #include <linux/init.h>
@@ -520,7 +521,7 @@ static void flush_buffer(struct tty_struct *tty);
 static void tx_hold(struct tty_struct *tty);
 static void tx_release(struct tty_struct *tty);
 
-static int  ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg);
+static int  ioctl(struct tty_struct *tty, struct file *file, unsigned int cmd, unsigned long arg);
 static int  chars_in_buffer(struct tty_struct *tty);
 static void throttle(struct tty_struct * tty);
 static void unthrottle(struct tty_struct * tty);
@@ -546,9 +547,9 @@ static int  tx_abort(SLMP_INFO *info);
 static int  rx_enable(SLMP_INFO *info, int enable);
 static int  modem_input_wait(SLMP_INFO *info,int arg);
 static int  wait_mgsl_event(SLMP_INFO *info, int __user *mask_ptr);
-static int  tiocmget(struct tty_struct *tty);
-static int  tiocmset(struct tty_struct *tty,
-			unsigned int set, unsigned int clear);
+static int  tiocmget(struct tty_struct *tty, struct file *file);
+static int  tiocmset(struct tty_struct *tty, struct file *file,
+		     unsigned int set, unsigned int clear);
 static int  set_break(struct tty_struct *tty, int break_state);
 
 static void add_device(SLMP_INFO *info);
@@ -812,15 +813,13 @@ static void close(struct tty_struct *tty, struct file *filp)
 
 	if (tty_port_close_start(&info->port, tty, filp) == 0)
 		goto cleanup;
-
-	mutex_lock(&info->port.mutex);
+		
  	if (info->port.flags & ASYNC_INITIALIZED)
  		wait_until_sent(tty, info->timeout);
 
 	flush_buffer(tty);
 	tty_ldisc_flush(tty);
 	shutdown(info);
-	mutex_unlock(&info->port.mutex);
 
 	tty_port_close_end(&info->port, tty);
 	info->port.tty = NULL;
@@ -836,7 +835,6 @@ cleanup:
 static void hangup(struct tty_struct *tty)
 {
 	SLMP_INFO *info = tty->driver_data;
-	unsigned long flags;
 
 	if (debug_level >= DEBUG_LEVEL_INFO)
 		printk("%s(%d):%s hangup()\n",
@@ -845,16 +843,12 @@ static void hangup(struct tty_struct *tty)
 	if (sanity_check(info, tty->name, "hangup"))
 		return;
 
-	mutex_lock(&info->port.mutex);
 	flush_buffer(tty);
 	shutdown(info);
 
-	spin_lock_irqsave(&info->port.lock, flags);
 	info->port.count = 0;
 	info->port.flags &= ~ASYNC_NORMAL_ACTIVE;
 	info->port.tty = NULL;
-	spin_unlock_irqrestore(&info->port.lock, flags);
-	mutex_unlock(&info->port.mutex);
 
 	wake_up_interruptible(&info->port.open_wait);
 }
@@ -1068,7 +1062,9 @@ static void wait_until_sent(struct tty_struct *tty, int timeout)
 	if (sanity_check(info, tty->name, "wait_until_sent"))
 		return;
 
-	if (!test_bit(ASYNCB_INITIALIZED, &info->port.flags))
+	lock_kernel();
+
+	if (!(info->port.flags & ASYNC_INITIALIZED))
 		goto exit;
 
 	orig_jiffies = jiffies;
@@ -1098,10 +1094,8 @@ static void wait_until_sent(struct tty_struct *tty, int timeout)
 				break;
 		}
 	} else {
-		/*
-		 * TODO: determine if there is something similar to USC16C32
-		 * 	 TXSTATUS_ALL_SENT status
-		 */
+		//TODO: determine if there is something similar to USC16C32
+		// 	TXSTATUS_ALL_SENT status
 		while ( info->tx_active && info->tx_enabled) {
 			msleep_interruptible(jiffies_to_msecs(char_time));
 			if (signal_pending(current))
@@ -1112,6 +1106,7 @@ static void wait_until_sent(struct tty_struct *tty, int timeout)
 	}
 
 exit:
+	unlock_kernel();
 	if (debug_level >= DEBUG_LEVEL_INFO)
 		printk("%s(%d):%s wait_until_sent() exit\n",
 			 __FILE__,__LINE__, info->device_name );
@@ -1127,6 +1122,7 @@ static int write_room(struct tty_struct *tty)
 	if (sanity_check(info, tty->name, "write_room"))
 		return 0;
 
+	lock_kernel();
 	if (info->params.mode == MGSL_MODE_HDLC) {
 		ret = (info->tx_active) ? 0 : HDLC_MAX_FRAME_SIZE;
 	} else {
@@ -1134,6 +1130,7 @@ static int write_room(struct tty_struct *tty)
 		if (ret < 0)
 			ret = 0;
 	}
+	unlock_kernel();
 
 	if (debug_level >= DEBUG_LEVEL_INFO)
 		printk("%s(%d):%s write_room()=%d\n",
@@ -1248,15 +1245,20 @@ static void tx_release(struct tty_struct *tty)
  * Arguments:
  *
  * 	tty	pointer to tty instance data
+ * 	file	pointer to associated file object for device
  * 	cmd	IOCTL command code
  * 	arg	command argument/context
  *
  * Return Value:	0 if success, otherwise error code
  */
-static int ioctl(struct tty_struct *tty,
+static int do_ioctl(struct tty_struct *tty, struct file *file,
 		 unsigned int cmd, unsigned long arg)
 {
 	SLMP_INFO *info = tty->driver_data;
+	int error;
+	struct mgsl_icount cnow;	/* kernel counter temps */
+	struct serial_icounter_struct __user *p_cuser;	/* user space */
+	unsigned long flags;
 	void __user *argp = (void __user *)arg;
 
 	if (debug_level >= DEBUG_LEVEL_INFO)
@@ -1267,7 +1269,7 @@ static int ioctl(struct tty_struct *tty,
 		return -ENODEV;
 
 	if ((cmd != TIOCGSERIAL) && (cmd != TIOCSSERIAL) &&
-	    (cmd != TIOCMIWAIT)) {
+	    (cmd != TIOCMIWAIT) && (cmd != TIOCGICOUNT)) {
 		if (tty->flags & (1 << TTY_IO_ERROR))
 		    return -EIO;
 	}
@@ -1305,36 +1307,48 @@ static int ioctl(struct tty_struct *tty,
 		 * NB: both 1->0 and 0->1 transitions are counted except for
 		 *     RI where only 0->1 is counted.
 		 */
+	case TIOCGICOUNT:
+		spin_lock_irqsave(&info->lock,flags);
+		cnow = info->icount;
+		spin_unlock_irqrestore(&info->lock,flags);
+		p_cuser = argp;
+		PUT_USER(error,cnow.cts, &p_cuser->cts);
+		if (error) return error;
+		PUT_USER(error,cnow.dsr, &p_cuser->dsr);
+		if (error) return error;
+		PUT_USER(error,cnow.rng, &p_cuser->rng);
+		if (error) return error;
+		PUT_USER(error,cnow.dcd, &p_cuser->dcd);
+		if (error) return error;
+		PUT_USER(error,cnow.rx, &p_cuser->rx);
+		if (error) return error;
+		PUT_USER(error,cnow.tx, &p_cuser->tx);
+		if (error) return error;
+		PUT_USER(error,cnow.frame, &p_cuser->frame);
+		if (error) return error;
+		PUT_USER(error,cnow.overrun, &p_cuser->overrun);
+		if (error) return error;
+		PUT_USER(error,cnow.parity, &p_cuser->parity);
+		if (error) return error;
+		PUT_USER(error,cnow.brk, &p_cuser->brk);
+		if (error) return error;
+		PUT_USER(error,cnow.buf_overrun, &p_cuser->buf_overrun);
+		if (error) return error;
+		return 0;
 	default:
 		return -ENOIOCTLCMD;
 	}
 	return 0;
 }
 
-static int get_icount(struct tty_struct *tty,
-				struct serial_icounter_struct *icount)
+static int ioctl(struct tty_struct *tty, struct file *file,
+		 unsigned int cmd, unsigned long arg)
 {
-	SLMP_INFO *info = tty->driver_data;
-	struct mgsl_icount cnow;	/* kernel counter temps */
-	unsigned long flags;
-
-	spin_lock_irqsave(&info->lock,flags);
-	cnow = info->icount;
-	spin_unlock_irqrestore(&info->lock,flags);
-
-	icount->cts = cnow.cts;
-	icount->dsr = cnow.dsr;
-	icount->rng = cnow.rng;
-	icount->dcd = cnow.dcd;
-	icount->rx = cnow.rx;
-	icount->tx = cnow.tx;
-	icount->frame = cnow.frame;
-	icount->overrun = cnow.overrun;
-	icount->parity = cnow.parity;
-	icount->brk = cnow.brk;
-	icount->buf_overrun = cnow.buf_overrun;
-
-	return 0;
+	int ret;
+	lock_kernel();
+	ret = do_ioctl(tty, file, cmd, arg);
+	unlock_kernel();
+	return ret;
 }
 
 /*
@@ -2869,9 +2883,7 @@ static int get_stats(SLMP_INFO * info, struct mgsl_icount __user *user_icount)
 	if (!user_icount) {
 		memset(&info->icount, 0, sizeof(info->icount));
 	} else {
-		mutex_lock(&info->port.mutex);
 		COPY_TO_USER(err, user_icount, &info->icount, sizeof(struct mgsl_icount));
-		mutex_unlock(&info->port.mutex);
 		if (err)
 			return -EFAULT;
 	}
@@ -2886,9 +2898,7 @@ static int get_params(SLMP_INFO * info, MGSL_PARAMS __user *user_params)
 		printk("%s(%d):%s get_params()\n",
 			 __FILE__,__LINE__, info->device_name);
 
-	mutex_lock(&info->port.mutex);
 	COPY_TO_USER(err,user_params, &info->params, sizeof(MGSL_PARAMS));
-	mutex_unlock(&info->port.mutex);
 	if (err) {
 		if ( debug_level >= DEBUG_LEVEL_INFO )
 			printk( "%s(%d):%s get_params() user buffer copy failed\n",
@@ -2916,13 +2926,11 @@ static int set_params(SLMP_INFO * info, MGSL_PARAMS __user *new_params)
 		return -EFAULT;
 	}
 
-	mutex_lock(&info->port.mutex);
 	spin_lock_irqsave(&info->lock,flags);
 	memcpy(&info->params,&tmp_params,sizeof(MGSL_PARAMS));
 	spin_unlock_irqrestore(&info->lock,flags);
 
  	change_params(info);
-	mutex_unlock(&info->port.mutex);
 
 	return 0;
 }
@@ -3206,7 +3214,7 @@ static int modem_input_wait(SLMP_INFO *info,int arg)
 
 /* return the state of the serial control and status signals
  */
-static int tiocmget(struct tty_struct *tty)
+static int tiocmget(struct tty_struct *tty, struct file *file)
 {
 	SLMP_INFO *info = tty->driver_data;
 	unsigned int result;
@@ -3231,8 +3239,8 @@ static int tiocmget(struct tty_struct *tty)
 
 /* set modem control signals (DTR/RTS)
  */
-static int tiocmset(struct tty_struct *tty,
-					unsigned int set, unsigned int clear)
+static int tiocmset(struct tty_struct *tty, struct file *file,
+		    unsigned int set, unsigned int clear)
 {
 	SLMP_INFO *info = tty->driver_data;
  	unsigned long flags;
@@ -3358,9 +3366,7 @@ static int block_til_ready(struct tty_struct *tty, struct file *filp,
 			printk("%s(%d):%s block_til_ready() count=%d\n",
 				 __FILE__,__LINE__, tty->driver->name, port->count );
 
-		tty_unlock();
 		schedule();
-		tty_lock();
 	}
 
 	set_current_state(TASK_RUNNING);
@@ -3595,7 +3601,7 @@ static int claim_resources(SLMP_INFO *info)
 	info->memory_base = ioremap_nocache(info->phys_memory_base,
 								SCA_MEM_SIZE);
 	if (!info->memory_base) {
-		printk( "%s(%d):%s Can't map shared memory, MemAddr=%08X\n",
+		printk( "%s(%d):%s Cant map shared memory, MemAddr=%08X\n",
 			__FILE__,__LINE__,info->device_name, info->phys_memory_base );
 		info->init_error = DiagStatus_CantAssignPciResources;
 		goto errout;
@@ -3603,7 +3609,7 @@ static int claim_resources(SLMP_INFO *info)
 
 	info->lcr_base = ioremap_nocache(info->phys_lcr_base, PAGE_SIZE);
 	if (!info->lcr_base) {
-		printk( "%s(%d):%s Can't map LCR memory, MemAddr=%08X\n",
+		printk( "%s(%d):%s Cant map LCR memory, MemAddr=%08X\n",
 			__FILE__,__LINE__,info->device_name, info->phys_lcr_base );
 		info->init_error = DiagStatus_CantAssignPciResources;
 		goto errout;
@@ -3612,7 +3618,7 @@ static int claim_resources(SLMP_INFO *info)
 
 	info->sca_base = ioremap_nocache(info->phys_sca_base, PAGE_SIZE);
 	if (!info->sca_base) {
-		printk( "%s(%d):%s Can't map SCA memory, MemAddr=%08X\n",
+		printk( "%s(%d):%s Cant map SCA memory, MemAddr=%08X\n",
 			__FILE__,__LINE__,info->device_name, info->phys_sca_base );
 		info->init_error = DiagStatus_CantAssignPciResources;
 		goto errout;
@@ -3622,7 +3628,7 @@ static int claim_resources(SLMP_INFO *info)
 	info->statctrl_base = ioremap_nocache(info->phys_statctrl_base,
 								PAGE_SIZE);
 	if (!info->statctrl_base) {
-		printk( "%s(%d):%s Can't map SCA Status/Control memory, MemAddr=%08X\n",
+		printk( "%s(%d):%s Cant map SCA Status/Control memory, MemAddr=%08X\n",
 			__FILE__,__LINE__,info->device_name, info->phys_statctrl_base );
 		info->init_error = DiagStatus_CantAssignPciResources;
 		goto errout;
@@ -3869,7 +3875,7 @@ static void device_init(int adapter_num, struct pci_dev *pdev)
 					port_array[0]->irq_flags,
 					port_array[0]->device_name,
 					port_array[0]) < 0 ) {
-			printk( "%s(%d):%s Can't request interrupt, IRQ=%d\n",
+			printk( "%s(%d):%s Cant request interrupt, IRQ=%d\n",
 				__FILE__,__LINE__,
 				port_array[0]->device_name,
 				port_array[0]->irq_level );
@@ -3902,7 +3908,6 @@ static const struct tty_operations ops = {
 	.hangup = hangup,
 	.tiocmget = tiocmget,
 	.tiocmset = tiocmset,
-	.get_icount = get_icount,
 	.proc_fops = &synclinkmp_proc_fops,
 };
 

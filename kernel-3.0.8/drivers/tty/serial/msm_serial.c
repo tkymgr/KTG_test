@@ -232,12 +232,11 @@ void msm_serial_clock_on(struct uart_port *port, int force) {
 #ifdef CONFIG_SERIAL_MSM_RX_WAKEUP
 static irqreturn_t msm_rx_irq(int irq, void *dev_id)
 {
-	unsigned long flags;
 	struct uart_port *port = dev_id;
 	struct msm_port *msm_port = UART_TO_MSM(port);
 	int inject_wakeup = 0;
 
-	spin_lock_irqsave(&port->lock, flags);
+	spin_lock(&port->lock);
 
 	if (msm_port->clk_state == MSM_CLK_OFF) {
 		/* ignore the first irq - it is a pending irq that occured
@@ -258,7 +257,7 @@ static irqreturn_t msm_rx_irq(int irq, void *dev_id)
 		tty_flip_buffer_push(tty);
 	}
 
-	spin_unlock_irqrestore(&port->lock, flags);
+	spin_unlock(&port->lock);
 	return IRQ_HANDLED;
 }
 #endif
@@ -359,12 +358,11 @@ static void handle_delta_cts(struct uart_port *port)
 
 static irqreturn_t msm_irq(int irq, void *dev_id)
 {
-	unsigned long flags;
 	struct uart_port *port = dev_id;
 	struct msm_port *msm_port = UART_TO_MSM(port);
 	unsigned int misr;
 
-	spin_lock_irqsave(&port->lock, flags);
+	spin_lock(&port->lock);
 	clk_enable(msm_port->clk);
 	misr = msm_read(port, UART_MISR);
 	msm_write(port, 0, UART_IMR); /* disable interrupt */
@@ -378,7 +376,7 @@ static irqreturn_t msm_irq(int irq, void *dev_id)
 
 	msm_write(port, msm_port->imr, UART_IMR); /* restore interrupt */
 	clk_disable(msm_port->clk);
-	spin_unlock_irqrestore(&port->lock, flags);
+	spin_unlock(&port->lock);
 
 	return IRQ_HANDLED;
 }
@@ -570,7 +568,7 @@ static int msm_startup(struct uart_port *port)
 	if (unlikely(ret))
 		return ret;
 
-	if (unlikely(irq_set_irq_wake(port->irq, 1))) {
+	if (unlikely(set_irq_wake(port->irq, 1))) {
 		free_irq(port->irq, port);
 		return -ENXIO;
 	}
@@ -612,7 +610,7 @@ static int msm_startup(struct uart_port *port)
 
 #ifdef CONFIG_SERIAL_MSM_RX_WAKEUP
 	if (use_low_power_wakeup(msm_port)) {
-		ret = irq_set_irq_wake(msm_port->wakeup.irq, 1);
+		ret = set_irq_wake(msm_port->wakeup.irq, 1);
 		if (unlikely(ret))
 			return ret;
 		ret = request_irq(msm_port->wakeup.irq, msm_rx_irq,
@@ -642,7 +640,7 @@ static void msm_shutdown(struct uart_port *port)
 
 #ifdef CONFIG_SERIAL_MSM_RX_WAKEUP
 	if (use_low_power_wakeup(msm_port)) {
-		irq_set_irq_wake(msm_port->wakeup.irq, 0);
+		set_irq_wake(msm_port->wakeup.irq, 0);
 		free_irq(msm_port->wakeup.irq, msm_port);
 	}
 #endif
@@ -941,7 +939,7 @@ static void msm_console_write(struct console *co, const char *s,
 static int __init msm_console_setup(struct console *co, char *options)
 {
 	struct uart_port *port;
-	int baud = 0, flow, bits, parity;
+	int baud, flow, bits, parity;
 
 	if (unlikely(co->index >= UART_NR || co->index < 0))
 		return -ENXIO;
@@ -1025,7 +1023,7 @@ static int __init msm_serial_probe(struct platform_device *pdev)
 	port->dev = &pdev->dev;
 	msm_port = UART_TO_MSM(port);
 
-	msm_port->clk = clk_get(&pdev->dev, "core_clk");
+	msm_port->clk = clk_get(&pdev->dev, "uart_clk");
 	if (unlikely(IS_ERR(msm_port->clk)))
 		return PTR_ERR(msm_port->clk);
 	port->uartclk = clk_get_rate(msm_port->clk);

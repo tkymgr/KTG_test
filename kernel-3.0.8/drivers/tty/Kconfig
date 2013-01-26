@@ -1,5 +1,5 @@
 config VT
-	bool "Virtual terminal" if EXPERT
+	bool "Virtual terminal" if EMBEDDED
 	depends on !S390
 	select INPUT
 	default y
@@ -33,13 +33,13 @@ config VT
 config CONSOLE_TRANSLATIONS
 	depends on VT
 	default y
-	bool "Enable character translations in console" if EXPERT
+	bool "Enable character translations in console" if EMBEDDED
 	---help---
 	  This enables support for font mapping and Unicode translation
 	  on virtual consoles.
 
 config VT_CONSOLE
-	bool "Support for console on virtual terminal" if EXPERT
+	bool "Support for console on virtual terminal" if EMBEDDED
 	depends on VT
 	default y
 	---help---
@@ -83,7 +83,7 @@ config VT_HW_CONSOLE_BINDING
 	 <file:Documentation/fb/fbcon.txt>.
 
 config UNIX98_PTYS
-	bool "Unix98 PTY support" if EXPERT
+	bool "Unix98 PTY support" if EMBEDDED
 	default y
 	---help---
 	  A pseudo terminal (PTY) is a software device consisting of two

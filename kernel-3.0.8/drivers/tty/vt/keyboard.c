@@ -1,4 +1,6 @@
 /*
+ * linux/drivers/char/keyboard.c
+ *
  * Written for linux by Johan Myreen as a translation from
  * the assembly version by Linus (with diacriticals added)
  *
@@ -173,7 +175,8 @@ EXPORT_SYMBOL_GPL(unregister_keyboard_notifier);
  */
 
 struct getset_keycode_data {
-	struct input_keymap_entry ke;
+	unsigned int scancode;
+	unsigned int keycode;
 	int error;
 };
 
@@ -181,50 +184,32 @@ static int getkeycode_helper(struct input_handle *handle, void *data)
 {
 	struct getset_keycode_data *d = data;
 
-	d->error = input_get_keycode(handle->dev, &d->ke);
+	d->error = input_get_keycode(handle->dev, d->scancode, &d->keycode);
 
 	return d->error == 0; /* stop as soon as we successfully get one */
 }
 
 int getkeycode(unsigned int scancode)
 {
-	struct getset_keycode_data d = {
-		.ke	= {
-			.flags		= 0,
-			.len		= sizeof(scancode),
-			.keycode	= 0,
-		},
-		.error	= -ENODEV,
-	};
-
-	memcpy(d.ke.scancode, &scancode, sizeof(scancode));
+	struct getset_keycode_data d = { scancode, 0, -ENODEV };
 
 	input_handler_for_each_handle(&kbd_handler, &d, getkeycode_helper);
 
-	return d.error ?: d.ke.keycode;
+	return d.error ?: d.keycode;
 }
 
 static int setkeycode_helper(struct input_handle *handle, void *data)
 {
 	struct getset_keycode_data *d = data;
 
-	d->error = input_set_keycode(handle->dev, &d->ke);
+	d->error = input_set_keycode(handle->dev, d->scancode, d->keycode);
 
 	return d->error == 0; /* stop as soon as we successfully set one */
 }
 
 int setkeycode(unsigned int scancode, unsigned int keycode)
 {
-	struct getset_keycode_data d = {
-		.ke	= {
-			.flags		= 0,
-			.len		= sizeof(scancode),
-			.keycode	= keycode,
-		},
-		.error	= -ENODEV,
-	};
-
-	memcpy(d.ke.scancode, &scancode, sizeof(scancode));
+	struct getset_keycode_data d = { scancode, keycode, -ENODEV };
 
 	input_handler_for_each_handle(&kbd_handler, &d, setkeycode_helper);
 
@@ -314,7 +299,7 @@ int kbd_rate(struct kbd_repeat *rep)
  */
 static void put_queue(struct vc_data *vc, int ch)
 {
-	struct tty_struct *tty = vc->port.tty;
+	struct tty_struct *tty = vc->vc_tty;
 
 	if (tty) {
 		tty_insert_flip_char(tty, ch, 0);
@@ -324,7 +309,7 @@ static void put_queue(struct vc_data *vc, int ch)
 
 static void puts_queue(struct vc_data *vc, char *cp)
 {
-	struct tty_struct *tty = vc->port.tty;
+	struct tty_struct *tty = vc->vc_tty;
 
 	if (!tty)
 		return;
@@ -500,7 +485,7 @@ static void fn_show_ptregs(struct vc_data *vc)
 
 static void fn_hold(struct vc_data *vc)
 {
-	struct tty_struct *tty = vc->port.tty;
+	struct tty_struct *tty = vc->vc_tty;
 
 	if (rep || !tty)
 		return;
@@ -578,7 +563,7 @@ static void fn_inc_console(struct vc_data *vc)
 
 static void fn_send_intr(struct vc_data *vc)
 {
-	struct tty_struct *tty = vc->port.tty;
+	struct tty_struct *tty = vc->vc_tty;
 
 	if (!tty)
 		return;
@@ -598,7 +583,7 @@ static void fn_scroll_back(struct vc_data *vc)
 
 static void fn_show_mem(struct vc_data *vc)
 {
-	show_mem(0);
+	show_mem();
 }
 
 static void fn_show_state(struct vc_data *vc)
@@ -652,8 +637,7 @@ static void k_spec(struct vc_data *vc, unsigned char value, char up_flag)
 	if (value >= ARRAY_SIZE(fn_handler))
 		return;
 	if ((kbd->kbdmode == VC_RAW ||
-	     kbd->kbdmode == VC_MEDIUMRAW ||
-	     kbd->kbdmode == VC_OFF) &&
+	     kbd->kbdmode == VC_MEDIUMRAW) &&
 	     value != KVAL(K_SAK))
 		return;		/* SAK is allowed even in raw mode */
 	fn_handler[value](vc);
@@ -1178,7 +1162,7 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 	struct keyboard_notifier_param param = { .vc = vc, .value = keycode, .down = down };
 	int rc;
 
-	tty = vc->port.tty;
+	tty = vc->vc_tty;
 
 	if (tty && (!tty->driver_data)) {
 		/* No driver data? Strange. Okay we fix it then. */
@@ -1294,7 +1278,7 @@ static void kbd_keycode(unsigned int keycode, int down, int hw_raw)
 	if (rc == NOTIFY_STOP)
 		return;
 
-	if ((raw_mode || kbd->kbdmode == VC_OFF) && type != KT_SPEC && type != KT_SHIFT)
+	if (raw_mode && type != KT_SPEC && type != KT_SHIFT)
 		return;
 
 	(*k_handler[type])(vc, keysym & 0xff, !down);
@@ -1331,14 +1315,10 @@ static bool kbd_match(struct input_handler *handler, struct input_dev *dev)
 	if (test_bit(EV_SND, dev->evbit))
 		return true;
 
-	if (test_bit(EV_KEY, dev->evbit)) {
+	if (test_bit(EV_KEY, dev->evbit))
 		for (i = KEY_RESERVED; i < BTN_MISC; i++)
 			if (test_bit(i, dev->keybit))
 				return true;
-		for (i = KEY_BRL_DOT1; i <= KEY_BRL_DOT10; i++)
-			if (test_bit(i, dev->keybit))
-				return true;
-	}
 
 	return false;
 }

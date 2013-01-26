@@ -1,4 +1,6 @@
 /*
+ * linux/drivers/char/selection.c
+ *
  * This module exports the functions:
  *
  *     'int set_selection(struct tiocl_selection __user *, struct tty_struct *)'
@@ -310,20 +312,12 @@ int paste_selection(struct tty_struct *tty)
 	struct  tty_ldisc *ld;
 	DECLARE_WAITQUEUE(wait, current);
 
-	/* always called with BTM from vt_ioctl */
-	WARN_ON(!tty_locked());
-
-	console_lock();
+	acquire_console_sem();
 	poke_blanked_console();
-	console_unlock();
+	release_console_sem();
 
-	ld = tty_ldisc_ref(tty);
-	if (!ld) {
-		tty_unlock();
-		ld = tty_ldisc_ref_wait(tty);
-		tty_lock();
-	}
-
+	ld = tty_ldisc_ref_wait(tty);
+	
 	add_wait_queue(&vc->paste_wait, &wait);
 	while (sel_buffer && sel_buffer_lth > pasted) {
 		set_current_state(TASK_INTERRUPTIBLE);

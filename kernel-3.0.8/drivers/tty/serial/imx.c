@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/serial/imx.c
+ *
  *  Driver for Motorola IMX serial ports
  *
  *  Based on drivers/char/serial.c, by Linus Torvalds, Theodore Ts'o.
@@ -76,7 +78,7 @@
 #define  URXD_FRMERR     (1<<12)
 #define  URXD_BRK        (1<<11)
 #define  URXD_PRERR      (1<<10)
-#define  UCR1_ADEN       (1<<15) /* Auto detect interrupt */
+#define  UCR1_ADEN       (1<<15) /* Auto dectect interrupt */
 #define  UCR1_ADBR       (1<<14) /* Auto detect baud rate */
 #define  UCR1_TRDYEN     (1<<13) /* Transmitter ready interrupt enable */
 #define  UCR1_IDEN       (1<<12) /* Idle condition interrupt */
@@ -325,13 +327,14 @@ static inline void imx_transmit_buffer(struct imx_port *sport)
 {
 	struct circ_buf *xmit = &sport->port.state->xmit;
 
-	while (!uart_circ_empty(xmit) &&
-			!(readl(sport->port.membase + UTS) & UTS_TXFULL)) {
+	while (!(readl(sport->port.membase + UTS) & UTS_TXFULL)) {
 		/* send xmit->buf[xmit->tail]
 		 * out the port here */
 		writel(xmit->buf[xmit->tail], sport->port.membase + URTX0);
 		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
 		sport->port.icount.tx++;
+		if (uart_circ_empty(xmit))
+			break;
 	}
 
 	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
@@ -380,13 +383,12 @@ static void imx_start_tx(struct uart_port *port)
 static irqreturn_t imx_rtsint(int irq, void *dev_id)
 {
 	struct imx_port *sport = dev_id;
-	unsigned int val;
+	unsigned int val = readl(sport->port.membase + USR1) & USR1_RTSS;
 	unsigned long flags;
 
 	spin_lock_irqsave(&sport->port.lock, flags);
 
 	writel(USR1_RTSD, sport->port.membase + USR1);
-	val = readl(sport->port.membase + USR1) & USR1_RTSS;
 	uart_handle_cts_change(&sport->port, !!val);
 	wake_up_interruptible(&sport->port.state->port.delta_msr_wait);
 
@@ -907,11 +909,13 @@ imx_set_termios(struct uart_port *port, struct ktermios *termios,
 	rational_best_approximation(16 * div * baud, sport->port.uartclk,
 		1 << 16, 1 << 16, &num, &denom);
 
-	tdiv64 = sport->port.uartclk;
-	tdiv64 *= num;
-	do_div(tdiv64, denom * 16 * div);
-	tty_termios_encode_baud_rate(termios,
+	if (port->state && port->state->port.tty) {
+		tdiv64 = sport->port.uartclk;
+		tdiv64 *= num;
+		do_div(tdiv64, denom * 16 * div);
+		tty_encode_baud_rate(sport->port.state->port.tty,
 				(speed_t)tdiv64, (speed_t)tdiv64);
+	}
 
 	num -= 1;
 	denom -= 1;

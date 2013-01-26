@@ -474,7 +474,7 @@ static void sunzilog_transmit_chars(struct uart_sunzilog_port *up,
 		 * be nice to transmit console writes just like we normally would for
 		 * a TTY line. (ie. buffered and TX interrupt driven).  That is not
 		 * easy because console writes cannot sleep.  One solution might be
-		 * to poll on enough port->xmit space becoming free.  -DaveM
+		 * to poll on enough port->xmit space becomming free.  -DaveM
 		 */
 		if (!(status & Tx_BUF_EMP))
 			return;
@@ -1230,7 +1230,7 @@ static int __init sunzilog_console_setup(struct console *con, char *options)
 	       (sunzilog_reg.minor - 64) + con->index, con->index);
 
 	/* Get firmware console settings.  */
-	sunserial_console_termios(con, up->port.dev->of_node);
+	sunserial_console_termios(con, to_of_device(up->port.dev)->dev.of_node);
 
 	/* Firmware console speed is limited to 150-->38400 baud so
 	 * this hackish cflag thing is OK.
@@ -1399,7 +1399,7 @@ static void __devinit sunzilog_init_hw(struct uart_sunzilog_port *up)
 
 static int zilog_irq = -1;
 
-static int __devinit zs_probe(struct platform_device *op)
+static int __devinit zs_probe(struct of_device *op, const struct of_device_id *match)
 {
 	static int kbm_inst, uart_inst;
 	int inst;
@@ -1426,7 +1426,7 @@ static int __devinit zs_probe(struct platform_device *op)
 	rp = sunzilog_chip_regs[inst];
 
 	if (zilog_irq == -1)
-		zilog_irq = op->archdata.irqs[0];
+		zilog_irq = op->irqs[0];
 
 	up = &sunzilog_port_table[inst * 2];
 
@@ -1434,7 +1434,7 @@ static int __devinit zs_probe(struct platform_device *op)
 	up[0].port.mapbase = op->resource[0].start + 0x00;
 	up[0].port.membase = (void __iomem *) &rp->channelA;
 	up[0].port.iotype = UPIO_MEM;
-	up[0].port.irq = op->archdata.irqs[0];
+	up[0].port.irq = op->irqs[0];
 	up[0].port.uartclk = ZS_CLOCK;
 	up[0].port.fifosize = 1;
 	up[0].port.ops = &sunzilog_pops;
@@ -1451,7 +1451,7 @@ static int __devinit zs_probe(struct platform_device *op)
 	up[1].port.mapbase = op->resource[0].start + 0x04;
 	up[1].port.membase = (void __iomem *) &rp->channelB;
 	up[1].port.iotype = UPIO_MEM;
-	up[1].port.irq = op->archdata.irqs[0];
+	up[1].port.irq = op->irqs[0];
 	up[1].port.uartclk = ZS_CLOCK;
 	up[1].port.fifosize = 1;
 	up[1].port.ops = &sunzilog_pops;
@@ -1492,12 +1492,12 @@ static int __devinit zs_probe(struct platform_device *op)
 		       "is a %s\n",
 		       dev_name(&op->dev),
 		       (unsigned long long) up[0].port.mapbase,
-		       op->archdata.irqs[0], sunzilog_type(&up[0].port));
+		       op->irqs[0], sunzilog_type(&up[0].port));
 		printk(KERN_INFO "%s: Mouse at MMIO 0x%llx (irq = %d) "
 		       "is a %s\n",
 		       dev_name(&op->dev),
 		       (unsigned long long) up[1].port.mapbase,
-		       op->archdata.irqs[0], sunzilog_type(&up[1].port));
+		       op->irqs[0], sunzilog_type(&up[1].port));
 		kbm_inst++;
 	}
 
@@ -1516,7 +1516,7 @@ static void __devexit zs_remove_one(struct uart_sunzilog_port *up)
 		uart_remove_one_port(&sunzilog_reg, &up->port);
 }
 
-static int __devexit zs_remove(struct platform_device *op)
+static int __devexit zs_remove(struct of_device *op)
 {
 	struct uart_sunzilog_port *up = dev_get_drvdata(&op->dev);
 	struct zilog_layout __iomem *regs;
@@ -1540,7 +1540,7 @@ static const struct of_device_id zs_match[] = {
 };
 MODULE_DEVICE_TABLE(of, zs_match);
 
-static struct platform_driver zs_driver = {
+static struct of_platform_driver zs_driver = {
 	.driver = {
 		.name = "zs",
 		.owner = THIS_MODULE,
@@ -1576,7 +1576,7 @@ static int __init sunzilog_init(void)
 			goto out_free_tables;
 	}
 
-	err = platform_driver_register(&zs_driver);
+	err = of_register_driver(&zs_driver, &of_bus_type);
 	if (err)
 		goto out_unregister_uart;
 
@@ -1604,7 +1604,7 @@ out:
 	return err;
 
 out_unregister_driver:
-	platform_driver_unregister(&zs_driver);
+	of_unregister_driver(&zs_driver);
 
 out_unregister_uart:
 	if (num_sunzilog) {
@@ -1619,7 +1619,7 @@ out_free_tables:
 
 static void __exit sunzilog_exit(void)
 {
-	platform_driver_unregister(&zs_driver);
+	of_unregister_driver(&zs_driver);
 
 	if (zilog_irq != -1) {
 		struct uart_sunzilog_port *up = sunzilog_irq_chain;

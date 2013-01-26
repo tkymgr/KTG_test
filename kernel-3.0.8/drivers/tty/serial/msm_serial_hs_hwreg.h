@@ -1,6 +1,7 @@
 /* drivers/serial/msm_serial_hs_hwreg.h
  *
  * Copyright (c) 2007-2009, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2011 Sony Ericsson Mobile Communications AB
  * 
  * All source code in this file is licensed under the following license
  * except where indicated.
@@ -31,28 +32,6 @@
 #define TCSR_ADM_1_B_CRCI_MUX_SEL      0x7C
 #define ADM1_CRCI_GSBI6_RX_SEL         0x800
 #define ADM1_CRCI_GSBI6_TX_SEL         0x400
-
-enum msm_hsl_regs {
-	UARTDM_MR1,
-	UARTDM_MR2,
-	UARTDM_IMR,
-	UARTDM_SR,
-	UARTDM_CR,
-	UARTDM_CSR,
-	UARTDM_IPR,
-	UARTDM_ISR,
-	UARTDM_RX_TOTAL_SNAP,
-	UARTDM_RFWR,
-	UARTDM_TFWR,
-	UARTDM_RF,
-	UARTDM_TF,
-	UARTDM_MISR,
-	UARTDM_DMRX,
-	UARTDM_NCF_TX,
-	UARTDM_DMEN,
-	UARTDM_BCR,
-	UARTDM_LAST
-};
 
 #define UARTDM_MR1_ADDR 0x0
 #define UARTDM_MR2_ADDR 0x4
@@ -197,5 +176,9 @@ enum msm_hsl_regs {
 /* Field definitions for UART_DM_DMEN*/
 #define UARTDM_TX_DM_EN_BMSK 0x1
 #define UARTDM_RX_DM_EN_BMSK 0x2
+
+/* Field definitions for UART_DM_IRDA*/
+#define UARTDM_IRDA_INVERT_RX_BMSK	BIT(1)
+#define UARTDM_IRDA_EN_BMSK		BIT(0)
 
 #endif /* MSM_SERIAL_HS_HWREG_H */

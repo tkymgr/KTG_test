@@ -61,7 +61,8 @@
 #include <linux/delay.h>
 
 
-#define VERSION_STRING DRIVER_DESC " 2.1d"
+#define VERSION_STRING DRIVER_DESC " 2.1d (build date: " \
+					__DATE__ " " __TIME__ ")"
 
 /*    Macros definitions */
 
@@ -363,6 +364,8 @@ struct port {
 	u8 toggle_ul;
 	u16 token_dl;
 
+	/* mutex to ensure one access patch to this port */
+	struct mutex tty_sem;
 	wait_queue_head_t tty_wait;
 	struct async_icount tty_icount;
 
@@ -1428,8 +1431,8 @@ static int __devinit nozomi_card_init(struct pci_dev *pdev,
 	}
 
 	for (i = PORT_MDM; i < MAX_PORT; i++) {
-		if (kfifo_alloc(&dc->port[i].fifo_ul, FIFO_BUFFER_SIZE_UL,
-					GFP_KERNEL)) {
+		if (kfifo_alloc(&dc->port[i].fifo_ul,
+		      FIFO_BUFFER_SIZE_UL, GFP_ATOMIC)) {
 			dev_err(&pdev->dev,
 					"Could not allocate kfifo buffer\n");
 			ret = -ENOMEM;
@@ -1471,6 +1474,7 @@ static int __devinit nozomi_card_init(struct pci_dev *pdev,
 		struct device *tty_dev;
 		struct port *port = &dc->port[i];
 		port->dc = dc;
+		mutex_init(&port->tty_sem);
 		tty_port_init(&port->port);
 		port->port.ops = &noz_tty_port_ops;
 		tty_dev = tty_register_device(ntty_driver, dc->index_start + i,
@@ -1509,6 +1513,8 @@ static void __devexit tty_exit(struct nozomi *dc)
 	unsigned int i;
 
 	DBG1(" ");
+
+	flush_scheduled_work();
 
 	for (i = 0; i < MAX_PORT; ++i) {
 		struct tty_struct *tty = tty_port_tty_get(&dc->port[i].port);
@@ -1669,7 +1675,7 @@ static void ntty_hangup(struct tty_struct *tty)
 
 /*
  * called when the userspace process writes to the tty (/dev/noz*).
- * Data is inserted into a fifo, which is then read and transferred to the modem.
+ * Data is inserted into a fifo, which is then read and transfered to the modem.
  */
 static int ntty_write(struct tty_struct *tty, const unsigned char *buffer,
 		      int count)
@@ -1683,6 +1689,13 @@ static int ntty_write(struct tty_struct *tty, const unsigned char *buffer,
 
 	if (!dc || !port)
 		return -ENODEV;
+
+	mutex_lock(&port->tty_sem);
+
+	if (unlikely(!port->port.count)) {
+		DBG1(" ");
+		goto exit;
+	}
 
 	rval = kfifo_in(&port->fifo_ul, (unsigned char *)buffer, count);
 
@@ -1708,6 +1721,7 @@ static int ntty_write(struct tty_struct *tty, const unsigned char *buffer,
 	spin_unlock_irqrestore(&dc->spin_mutex, flags);
 
 exit:
+	mutex_unlock(&port->tty_sem);
 	return rval;
 }
 
@@ -1726,14 +1740,18 @@ static int ntty_write_room(struct tty_struct *tty)
 	int room = 4096;
 	const struct nozomi *dc = get_dc_by_tty(tty);
 
-	if (dc)
-		room = kfifo_avail(&port->fifo_ul);
-
+	if (dc) {
+		mutex_lock(&port->tty_sem);
+		if (port->port.count)
+			room = port->fifo_ul.size -
+					kfifo_len(&port->fifo_ul);
+		mutex_unlock(&port->tty_sem);
+	}
 	return room;
 }
 
 /* Gets io control parameters */
-static int ntty_tiocmget(struct tty_struct *tty)
+static int ntty_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	const struct port *port = tty->driver_data;
 	const struct ctrl_dl *ctrl_dl = &port->ctrl_dl;
@@ -1750,8 +1768,8 @@ static int ntty_tiocmget(struct tty_struct *tty)
 }
 
 /* Sets io controls parameters */
-static int ntty_tiocmset(struct tty_struct *tty,
-					unsigned int set, unsigned int clear)
+static int ntty_tiocmset(struct tty_struct *tty, struct file *file,
+	unsigned int set, unsigned int clear)
 {
 	struct nozomi *dc = get_dc_by_tty(tty);
 	unsigned long flags;
@@ -1787,30 +1805,31 @@ static int ntty_cflags_changed(struct port *port, unsigned long flags,
 	return ret;
 }
 
-static int ntty_tiocgicount(struct tty_struct *tty,
-				struct serial_icounter_struct *icount)
+static int ntty_ioctl_tiocgicount(struct port *port, void __user *argp)
 {
-	struct port *port = tty->driver_data;
 	const struct async_icount cnow = port->tty_icount;
+	struct serial_icounter_struct icount;
 
-	icount->cts = cnow.cts;
-	icount->dsr = cnow.dsr;
-	icount->rng = cnow.rng;
-	icount->dcd = cnow.dcd;
-	icount->rx = cnow.rx;
-	icount->tx = cnow.tx;
-	icount->frame = cnow.frame;
-	icount->overrun = cnow.overrun;
-	icount->parity = cnow.parity;
-	icount->brk = cnow.brk;
-	icount->buf_overrun = cnow.buf_overrun;
-	return 0;
+	icount.cts = cnow.cts;
+	icount.dsr = cnow.dsr;
+	icount.rng = cnow.rng;
+	icount.dcd = cnow.dcd;
+	icount.rx = cnow.rx;
+	icount.tx = cnow.tx;
+	icount.frame = cnow.frame;
+	icount.overrun = cnow.overrun;
+	icount.parity = cnow.parity;
+	icount.brk = cnow.brk;
+	icount.buf_overrun = cnow.buf_overrun;
+
+	return copy_to_user(argp, &icount, sizeof(icount)) ? -EFAULT : 0;
 }
 
-static int ntty_ioctl(struct tty_struct *tty,
+static int ntty_ioctl(struct tty_struct *tty, struct file *file,
 		      unsigned int cmd, unsigned long arg)
 {
 	struct port *port = tty->driver_data;
+	void __user *argp = (void __user *)arg;
 	int rval = -ENOIOCTLCMD;
 
 	DBG1("******** IOCTL, cmd: %d", cmd);
@@ -1822,7 +1841,9 @@ static int ntty_ioctl(struct tty_struct *tty,
 		rval = wait_event_interruptible(port->tty_wait,
 				ntty_cflags_changed(port, arg, &cprev));
 		break;
-	}
+	} case TIOCGICOUNT:
+		rval = ntty_ioctl_tiocgicount(port, argp);
+		break;
 	default:
 		DBG1("ERR: 0x%08X, %d", cmd, cmd);
 		break;
@@ -1874,6 +1895,11 @@ static s32 ntty_chars_in_buffer(struct tty_struct *tty)
 		goto exit_in_buffer;
 	}
 
+	if (unlikely(!port->port.count)) {
+		dev_err(&dc->pdev->dev, "No tty open?\n");
+		goto exit_in_buffer;
+	}
+
 	rval = kfifo_len(&port->fifo_ul);
 
 exit_in_buffer:
@@ -1897,7 +1923,6 @@ static const struct tty_operations tty_ops = {
 	.chars_in_buffer = ntty_chars_in_buffer,
 	.tiocmget = ntty_tiocmget,
 	.tiocmset = ntty_tiocmset,
-	.get_icount = ntty_tiocgicount,
 	.install = ntty_install,
 	.cleanup = ntty_cleanup,
 };

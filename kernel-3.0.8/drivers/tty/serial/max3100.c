@@ -430,14 +430,17 @@ max3100_set_termios(struct uart_port *port, struct ktermios *termios,
 	int baud = 0;
 	unsigned cflag;
 	u32 param_new, param_mask, parity = 0;
+	struct tty_struct *tty = s->port.state->port.tty;
 
 	dev_dbg(&s->spi->dev, "%s\n", __func__);
+	if (!tty)
+		return;
 
 	cflag = termios->c_cflag;
 	param_new = 0;
 	param_mask = 0;
 
-	baud = tty_termios_baud_rate(termios);
+	baud = tty_get_baud_rate(tty);
 	param_new = s->conf & MAX3100_BAUD;
 	switch (baud) {
 	case 300:
@@ -482,7 +485,7 @@ max3100_set_termios(struct uart_port *port, struct ktermios *termios,
 	default:
 		baud = s->baud;
 	}
-	tty_termios_encode_baud_rate(termios, baud, baud);
+	tty_encode_baud_rate(tty, baud, baud);
 	s->baud = baud;
 	param_mask |= MAX3100_BAUD;
 
@@ -601,7 +604,7 @@ static int max3100_startup(struct uart_port *port)
 	s->rts = 0;
 
 	sprintf(b, "max3100-%d", s->minor);
-	s->workqueue = create_freezable_workqueue(b);
+	s->workqueue = create_freezeable_workqueue(b);
 	if (!s->workqueue) {
 		dev_warn(&s->spi->dev, "cannot create workqueue\n");
 		return -EBUSY;

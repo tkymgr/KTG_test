@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/char/amiserial.c
+ *
  * Serial driver for the amiga builtin port.
  *
  * This code was created by taking serial.c version 4.30 from kernel
@@ -79,6 +81,7 @@ static char *serial_version = "4.30";
 #include <linux/mm.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/bitops.h>
 #include <linux/platform_device.h>
@@ -1069,7 +1072,7 @@ static int get_serial_info(struct async_struct * info,
 	if (!retinfo)
 		return -EFAULT;
 	memset(&tmp, 0, sizeof(tmp));
-	tty_lock();
+	lock_kernel();
 	tmp.type = state->type;
 	tmp.line = state->line;
 	tmp.port = state->port;
@@ -1080,7 +1083,7 @@ static int get_serial_info(struct async_struct * info,
 	tmp.close_delay = state->close_delay;
 	tmp.closing_wait = state->closing_wait;
 	tmp.custom_divisor = state->custom_divisor;
-	tty_unlock();
+	unlock_kernel();
 	if (copy_to_user(retinfo,&tmp,sizeof(*retinfo)))
 		return -EFAULT;
 	return 0;
@@ -1097,14 +1100,14 @@ static int set_serial_info(struct async_struct * info,
 	if (copy_from_user(&new_serial,new_info,sizeof(new_serial)))
 		return -EFAULT;
 
-	tty_lock();
+	lock_kernel();
 	state = info->state;
 	old_state = *state;
   
 	change_irq = new_serial.irq != state->irq;
 	change_port = (new_serial.port != state->port);
 	if(change_irq || change_port || (new_serial.xmit_fifo_size != state->xmit_fifo_size)) {
-	  tty_unlock();
+	  unlock_kernel();
 	  return -EINVAL;
 	}
   
@@ -1124,7 +1127,7 @@ static int set_serial_info(struct async_struct * info,
 	}
 
 	if (new_serial.baud_base < 9600) {
-		tty_unlock();
+		unlock_kernel();
 		return -EINVAL;
 	}
 
@@ -1160,7 +1163,7 @@ check_and_exit:
 		}
 	} else
 		retval = startup(info);
-	tty_unlock();
+	unlock_kernel();
 	return retval;
 }
 
@@ -1192,7 +1195,7 @@ static int get_lsr_info(struct async_struct * info, unsigned int __user *value)
 }
 
 
-static int rs_tiocmget(struct tty_struct *tty)
+static int rs_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct async_struct * info = tty->driver_data;
 	unsigned char control, status;
@@ -1214,8 +1217,8 @@ static int rs_tiocmget(struct tty_struct *tty)
 		| (!(status  & SER_CTS) ? TIOCM_CTS : 0);
 }
 
-static int rs_tiocmset(struct tty_struct *tty, unsigned int set,
-						unsigned int clear)
+static int rs_tiocmset(struct tty_struct *tty, struct file *file,
+		       unsigned int set, unsigned int clear)
 {
 	struct async_struct * info = tty->driver_data;
 	unsigned long flags;
@@ -1260,42 +1263,13 @@ static int rs_break(struct tty_struct *tty, int break_state)
 	return 0;
 }
 
-/*
- * Get counter of input serial line interrupts (DCD,RI,DSR,CTS)
- * Return: write counters to the user passed counter struct
- * NB: both 1->0 and 0->1 transitions are counted except for
- *     RI where only 0->1 is counted.
- */
-static int rs_get_icount(struct tty_struct *tty,
-				struct serial_icounter_struct *icount)
-{
-	struct async_struct *info = tty->driver_data;
-	struct async_icount cnow;
-	unsigned long flags;
 
-	local_irq_save(flags);
-	cnow = info->state->icount;
-	local_irq_restore(flags);
-	icount->cts = cnow.cts;
-	icount->dsr = cnow.dsr;
-	icount->rng = cnow.rng;
-	icount->dcd = cnow.dcd;
-	icount->rx = cnow.rx;
-	icount->tx = cnow.tx;
-	icount->frame = cnow.frame;
-	icount->overrun = cnow.overrun;
-	icount->parity = cnow.parity;
-	icount->brk = cnow.brk;
-	icount->buf_overrun = cnow.buf_overrun;
-
-	return 0;
-}
-
-static int rs_ioctl(struct tty_struct *tty,
+static int rs_ioctl(struct tty_struct *tty, struct file * file,
 		    unsigned int cmd, unsigned long arg)
 {
 	struct async_struct * info = tty->driver_data;
 	struct async_icount cprev, cnow;	/* kernel counter temps */
+	struct serial_icounter_struct icount;
 	void __user *argp = (void __user *)arg;
 	unsigned long flags;
 
@@ -1358,6 +1332,31 @@ static int rs_ioctl(struct tty_struct *tty,
 			}
 			/* NOTREACHED */
 
+		/* 
+		 * Get counter of input serial line interrupts (DCD,RI,DSR,CTS)
+		 * Return: write counters to the user passed counter struct
+		 * NB: both 1->0 and 0->1 transitions are counted except for
+		 *     RI where only 0->1 is counted.
+		 */
+		case TIOCGICOUNT:
+			local_irq_save(flags);
+			cnow = info->state->icount;
+			local_irq_restore(flags);
+			icount.cts = cnow.cts;
+			icount.dsr = cnow.dsr;
+			icount.rng = cnow.rng;
+			icount.dcd = cnow.dcd;
+			icount.rx = cnow.rx;
+			icount.tx = cnow.tx;
+			icount.frame = cnow.frame;
+			icount.overrun = cnow.overrun;
+			icount.parity = cnow.parity;
+			icount.brk = cnow.brk;
+			icount.buf_overrun = cnow.buf_overrun;
+
+			if (copy_to_user(argp, &icount, sizeof(icount)))
+				return -EFAULT;
+			return 0;
 		case TIOCSERGWILD:
 		case TIOCSERSWILD:
 			/* "setserial -W" is called in Debian boot */
@@ -1529,7 +1528,6 @@ static void rs_wait_until_sent(struct tty_struct *tty, int timeout)
 {
 	struct async_struct * info = tty->driver_data;
 	unsigned long orig_jiffies, char_time;
-	int tty_was_locked = tty_locked();
 	int lsr;
 
 	if (serial_paranoia_check(info, tty->name, "rs_wait_until_sent"))
@@ -1540,12 +1538,7 @@ static void rs_wait_until_sent(struct tty_struct *tty, int timeout)
 
 	orig_jiffies = jiffies;
 
-	/*
-	 * tty_wait_until_sent is called from lots of places,
-	 * with or without the BTM.
-	 */
-	if (!tty_was_locked)
-		tty_lock();
+	lock_kernel();
 	/*
 	 * Set the check interval to be 1/5 of the estimated time to
 	 * send a single character, and make it at least 1.  The check
@@ -1586,8 +1579,7 @@ static void rs_wait_until_sent(struct tty_struct *tty, int timeout)
 			break;
 	}
 	__set_current_state(TASK_RUNNING);
-	if (!tty_was_locked)
-		tty_unlock();
+	unlock_kernel();
 #ifdef SERIAL_DEBUG_RS_WAIT_UNTIL_SENT
 	printk("lsr = %d (jiff=%lu)...done\n", lsr, jiffies);
 #endif
@@ -1711,9 +1703,7 @@ static int block_til_ready(struct tty_struct *tty, struct file * filp,
 		printk("block_til_ready blocking: ttys%d, count = %d\n",
 		       info->line, state->count);
 #endif
-		tty_unlock();
 		schedule();
-		tty_lock();
 	}
 	__set_current_state(TASK_RUNNING);
 	remove_wait_queue(&info->open_wait, &wait);
@@ -1959,7 +1949,6 @@ static const struct tty_operations serial_ops = {
 	.wait_until_sent = rs_wait_until_sent,
 	.tiocmget = rs_tiocmget,
 	.tiocmset = rs_tiocmset,
-	.get_icount = rs_get_icount,
 	.proc_fops = &rs_proc_fops,
 };
 

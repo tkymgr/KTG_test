@@ -125,7 +125,7 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 	brd->bd_uart_offset = 0x200;
 	brd->bd_dividend = 921600;
 
-	brd->re_map_membase = ioremap(brd->membase, pci_resource_len(pdev, 0));
+	brd->re_map_membase = ioremap(brd->membase, 0x1000);
 	if (!brd->re_map_membase) {
 		dev_err(&pdev->dev,
 			"card has no PCI Memory resources, "
@@ -172,15 +172,13 @@ static int __devinit jsm_probe_one(struct pci_dev *pdev, const struct pci_device
 		 	jsm_uart_port_init here! */
 		dev_err(&pdev->dev, "memory allocation for flipbuf failed\n");
 		rc = -ENOMEM;
-		goto out_free_uart;
+		goto out_free_irq;
 	}
 
 	pci_set_drvdata(pdev, brd);
 	pci_save_state(pdev);
 
 	return 0;
- out_free_uart:
-	jsm_remove_uart_port(brd);
  out_free_irq:
 	jsm_remove_uart_port(brd);
 	free_irq(brd->irq, brd);

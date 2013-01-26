@@ -1,4 +1,6 @@
 /*
+ *  linux/drivers/char/8250_pci.c
+ *
  *  Probe module for 8250/16550-type PCI serial ports.
  *
  *  Based on drivers/char/serial.c, by Linus Torvalds, Theodore Ts'o.
@@ -431,7 +433,7 @@ static void __devexit sbs_exit(struct pci_dev *dev)
 /*
  * SIIG serial cards have an PCI interface chip which also controls
  * the UART clocking frequency. Each UART can be clocked independently
- * (except cards equipped with 4 UARTs) and initial clocking settings
+ * (except cards equiped with 4 UARTs) and initial clocking settings
  * are stored in the EEPROM chip. It can cause problems because this
  * version of serial driver doesn't support differently clocked UART's
  * on single PCI card. To prevent this, initialization functions set
@@ -955,30 +957,6 @@ pci_default_setup(struct serial_private *priv,
 	return setup_port(priv, port, bar, offset, board->reg_shift);
 }
 
-static int
-ce4100_serial_setup(struct serial_private *priv,
-		  const struct pciserial_board *board,
-		  struct uart_port *port, int idx)
-{
-	int ret;
-
-	ret = setup_port(priv, port, 0, 0, board->reg_shift);
-	port->iotype = UPIO_MEM32;
-	port->type = PORT_XSCALE;
-	port->flags = (port->flags | UPF_FIXED_PORT | UPF_FIXED_TYPE);
-	port->regshift = 2;
-
-	return ret;
-}
-
-static int
-pci_omegapci_setup(struct serial_private *priv,
-		      const struct pciserial_board *board,
-		      struct uart_port *port, int idx)
-{
-	return setup_port(priv, port, 2, idx * 8, 0);
-}
-
 static int skip_tx_en_setup(struct serial_private *priv,
 			const struct pciserial_board *board,
 			struct uart_port *port, int idx)
@@ -994,15 +972,6 @@ static int skip_tx_en_setup(struct serial_private *priv,
 	return pci_default_setup(priv, board, port, idx);
 }
 
-static int pci_eg20t_init(struct pci_dev *dev)
-{
-#if defined(CONFIG_SERIAL_PCH_UART) || defined(CONFIG_SERIAL_PCH_UART_MODULE)
-	return -ENODEV;
-#else
-	return 0;
-#endif
-}
-
 /* This should be in linux/pci_ids.h */
 #define PCI_VENDOR_ID_SBSMODULARIO	0x124B
 #define PCI_SUBVENDOR_ID_SBSMODULARIO	0x124B
@@ -1012,7 +981,6 @@ static int pci_eg20t_init(struct pci_dev *dev)
 #define PCI_SUBDEVICE_ID_POCTAL232	0x0308
 #define PCI_SUBDEVICE_ID_POCTAL422	0x0408
 #define PCI_VENDOR_ID_ADVANTECH		0x13fe
-#define PCI_DEVICE_ID_INTEL_CE4100_UART 0x2e66
 #define PCI_DEVICE_ID_ADVANTECH_PCI3620	0x3620
 #define PCI_DEVICE_ID_TITAN_200I	0x8028
 #define PCI_DEVICE_ID_TITAN_400I	0x8048
@@ -1027,8 +995,6 @@ static int pci_eg20t_init(struct pci_dev *dev)
 #define PCI_DEVICE_ID_TITAN_200EI	0xA016
 #define PCI_DEVICE_ID_TITAN_200EISI	0xA017
 #define PCI_DEVICE_ID_OXSEMI_16PCI958	0x9538
-#define PCIE_DEVICE_ID_NEO_2_OX_IBM	0x00F6
-#define PCI_DEVICE_ID_PLX_CRONYX_OMEGA	0xc001
 
 /* Unknown vendors/cards - this should not be in linux/pci_ids.h */
 #define PCI_SUBDEVICE_ID_UNKNOWN_0x1584	0x1584
@@ -1105,13 +1071,6 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 		.subvendor	= PCI_ANY_ID,
 		.subdevice	= PCI_ANY_ID,
 		.setup		= skip_tx_en_setup,
-	},
-	{
-		.vendor		= PCI_VENDOR_ID_INTEL,
-		.device		= PCI_DEVICE_ID_INTEL_CE4100_UART,
-		.subvendor	= PCI_ANY_ID,
-		.subdevice	= PCI_ANY_ID,
-		.setup		= ce4100_serial_setup,
 	},
 	/*
 	 * ITE
@@ -1429,7 +1388,7 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 		.setup		= pci_default_setup,
 	},
 	/*
-	 * For Oxford Semiconductor Tornado based devices
+	 * For Oxford Semiconductor and Mainpine
 	 */
 	{
 		.vendor		= PCI_VENDOR_ID_OXSEMI,
@@ -1447,74 +1406,6 @@ static struct pci_serial_quirk pci_serial_quirks[] __refdata = {
 		.init		= pci_oxsemi_tornado_init,
 		.setup		= pci_default_setup,
 	},
-	{
-		.vendor		= PCI_VENDOR_ID_DIGI,
-		.device		= PCIE_DEVICE_ID_NEO_2_OX_IBM,
-		.subvendor		= PCI_SUBVENDOR_ID_IBM,
-		.subdevice		= PCI_ANY_ID,
-		.init			= pci_oxsemi_tornado_init,
-		.setup		= pci_default_setup,
-	},
-	{
-		.vendor         = PCI_VENDOR_ID_INTEL,
-		.device         = 0x8811,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = PCI_VENDOR_ID_INTEL,
-		.device         = 0x8812,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = PCI_VENDOR_ID_INTEL,
-		.device         = 0x8813,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = PCI_VENDOR_ID_INTEL,
-		.device         = 0x8814,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x8027,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x8028,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x8029,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x800C,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x800D,
-		.init		= pci_eg20t_init,
-	},
-	{
-		.vendor         = 0x10DB,
-		.device         = 0x800D,
-		.init		= pci_eg20t_init,
-	},
-	/*
-	 * Cronyx Omega PCI (PLX-chip based)
-	 */
-	{
-		.vendor		= PCI_VENDOR_ID_PLX,
-		.device		= PCI_DEVICE_ID_PLX_CRONYX_OMEGA,
-		.subvendor	= PCI_ANY_ID,
-		.subdevice	= PCI_ANY_ID,
-		.setup		= pci_omegapci_setup,
-	 },
 	/*
 	 * Default "match everything" terminator entry
 	 */
@@ -1701,8 +1592,6 @@ enum pci_board_num_t {
 	pbn_ADDIDATA_PCIe_2_3906250,
 	pbn_ADDIDATA_PCIe_4_3906250,
 	pbn_ADDIDATA_PCIe_8_3906250,
-	pbn_ce4100_1_115200,
-	pbn_omegapci,
 };
 
 /*
@@ -2392,24 +2281,10 @@ static struct pciserial_board pci_boards[] __devinitdata = {
 		.uart_offset	= 0x200,
 		.first_offset	= 0x1000,
 	},
-	[pbn_ce4100_1_115200] = {
-		.flags		= FL_BASE0,
-		.num_ports	= 1,
-		.base_baud	= 921600,
-		.reg_shift      = 2,
-	},
-	[pbn_omegapci] = {
-		.flags		= FL_BASE0,
-		.num_ports	= 8,
-		.base_baud	= 115200,
-		.uart_offset	= 0x200,
-	},
 };
 
 static const struct pci_device_id softmodem_blacklist[] = {
 	{ PCI_VDEVICE(AL, 0x5457), }, /* ALi Corporation M5457 AC'97 Modem */
-	{ PCI_VDEVICE(MOTOROLA, 0x3052), }, /* Motorola Si3052-based modem */
-	{ PCI_DEVICE(0x1543, 0x3052), }, /* Si3052-based modem, default IDs */
 };
 
 /*
@@ -2988,9 +2863,6 @@ static struct pci_device_id serial_pci_tbl[] = {
 		PCI_SUBVENDOR_ID_SIIG, PCI_SUBDEVICE_ID_SIIG_QUARTET_SERIAL,
 		0, 0,
 		pbn_b0_4_1152000 },
-	{	PCI_VENDOR_ID_OXSEMI, 0x9505,
-		PCI_ANY_ID, PCI_ANY_ID, 0, 0,
-		pbn_b0_bt_2_921600 },
 
 		/*
 		 * The below card is a little controversial since it is the
@@ -3167,14 +3039,6 @@ static struct pci_device_id serial_pci_tbl[] = {
 	{	PCI_VENDOR_ID_MAINPINE, 0x4000,	/* IQ Express 8 Port V.34 Super-G3 Fax */
 		PCI_VENDOR_ID_MAINPINE, 0x4008, 0, 0,
 		pbn_oxsemi_8_4000000 },
-
-	/*
-	 * Digi/IBM PCIe 2-port Async EIA-232 Adapter utilizing OxSemi Tornado
-	 */
-	{	PCI_VENDOR_ID_DIGI, PCIE_DEVICE_ID_NEO_2_OX_IBM,
-		PCI_SUBVENDOR_ID_IBM, PCI_ANY_ID, 0, 0,
-		pbn_oxsemi_2_4000000 },
-
 	/*
 	 * SBS Technologies, Inc. P-Octal and PMC-OCTPRO cards,
 	 * from skokodyn@yahoo.com
@@ -3886,7 +3750,7 @@ static struct pci_device_id serial_pci_tbl[] = {
 		0, 0, pbn_b0_1_115200 },
 
 	/*
-	 * Best Connectivity and Rosewill PCI Multi I/O cards
+	 * Best Connectivity PCI Multi I/O cards
 	 */
 
 	{	PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9865,
@@ -3894,23 +3758,8 @@ static struct pci_device_id serial_pci_tbl[] = {
 		0, 0, pbn_b0_1_115200 },
 
 	{	PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9865,
-		0xA000, 0x3002,
-		0, 0, pbn_b0_bt_2_115200 },
-
-	{	PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9865,
 		0xA000, 0x3004,
 		0, 0, pbn_b0_bt_4_115200 },
-	/* Intel CE4100 */
-	{	PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_CE4100_UART,
-		PCI_ANY_ID,  PCI_ANY_ID, 0, 0,
-		pbn_ce4100_1_115200 },
-
-	/*
-	 * Cronyx Omega PCI
-	 */
-	{	PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_CRONYX_OMEGA,
-		PCI_ANY_ID, PCI_ANY_ID, 0, 0,
-		pbn_omegapci },
 
 	/*
 	 * These entries match devices with class COMMUNICATION_SERIAL,

@@ -183,16 +183,16 @@ bfin_jc_circ_write(const unsigned char *buf, int count)
 }
 
 #ifndef CONFIG_BFIN_JTAG_COMM_CONSOLE
-# define console_lock()
-# define console_unlock()
+# define acquire_console_sem()
+# define release_console_sem()
 #endif
 static int
 bfin_jc_write(struct tty_struct *tty, const unsigned char *buf, int count)
 {
 	int i;
-	console_lock();
+	acquire_console_sem();
 	i = bfin_jc_circ_write(buf, count);
-	console_unlock();
+	release_console_sem();
 	wake_up_process(bfin_jc_kthread);
 	return i;
 }
@@ -251,11 +251,11 @@ static int __init bfin_jc_init(void)
 	bfin_jc_write_buf.head = bfin_jc_write_buf.tail = 0;
 	bfin_jc_write_buf.buf = kmalloc(CIRC_SIZE, GFP_KERNEL);
 	if (!bfin_jc_write_buf.buf)
-		goto err_buf;
+		goto err;
 
 	bfin_jc_driver = alloc_tty_driver(1);
 	if (!bfin_jc_driver)
-		goto err_driver;
+		goto err;
 
 	bfin_jc_driver->owner        = THIS_MODULE;
 	bfin_jc_driver->driver_name  = DRV_NAME;
@@ -275,9 +275,7 @@ static int __init bfin_jc_init(void)
 
  err:
 	put_tty_driver(bfin_jc_driver);
- err_driver:
 	kfree(bfin_jc_write_buf.buf);
- err_buf:
 	kthread_stop(bfin_jc_kthread);
 	return ret;
 }
