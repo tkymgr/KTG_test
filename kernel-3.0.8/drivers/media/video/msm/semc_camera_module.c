@@ -86,7 +86,7 @@ static uint8_t *g_rom_save_area;
 static uint32_t g_camera_clock_rate = DEFAULT_CLOCK_RATE;
 static struct semc_camera_ctrl_type *g_camera_ctrl;
 static DECLARE_WAIT_QUEUE_HEAD(g_camera_wait_queue);
-static DECLARE_MUTEX(g_camera_sem);
+static DEFINE_SEMAPHORE(g_camera_sem);
 
 static int semc_camera_i2c_read(
 	uint8_t slave_addr,

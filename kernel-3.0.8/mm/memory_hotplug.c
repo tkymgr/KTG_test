@@ -34,6 +34,23 @@
 
 #include "internal.h"
 
+DEFINE_MUTEX(mem_hotplug_mutex);
+
+void lock_memory_hotplug(void)
+{
+	mutex_lock(&mem_hotplug_mutex);
+
+	/* for exclusive hibernation if CONFIG_HIBERNATION=y */
+	lock_system_sleep();
+}
+
+void unlock_memory_hotplug(void)
+{
+	unlock_system_sleep();
+	mutex_unlock(&mem_hotplug_mutex);
+}
+
+
 /* add this memory to iomem resource */
 static struct resource *register_memory_resource(u64 start, u64 size)
 {
@@ -394,7 +411,7 @@ static int online_pages_range(unsigned long start_pfn, unsigned long nr_pages,
 }
 
 
-int online_pages(unsigned long pfn, unsigned long nr_pages)
+int __ref online_pages(unsigned long pfn, unsigned long nr_pages)
 {
 	unsigned long onlined_pages = 0;
 	struct zone *zone;
@@ -403,6 +420,7 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 	int ret;
 	struct memory_notify arg;
 
+	lock_memory_hotplug();
 	arg.start_pfn = pfn;
 	arg.nr_pages = nr_pages;
 	arg.status_change_nid = -1;
@@ -415,6 +433,7 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 	ret = notifier_to_errno(ret);
 	if (ret) {
 		memory_notify(MEM_CANCEL_ONLINE, &arg);
+		unlock_memory_hotplug();
 		return ret;
 	}
 	/*
@@ -439,6 +458,7 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 		printk(KERN_DEBUG "online_pages %lx at %lx failed\n",
 			nr_pages, pfn);
 		memory_notify(MEM_CANCEL_ONLINE, &arg);
+		unlock_memory_hotplug();
 		return ret;
 	}
 
@@ -463,6 +483,7 @@ int online_pages(unsigned long pfn, unsigned long nr_pages)
 
 	if (onlined_pages)
 		memory_notify(MEM_ONLINE, &arg);
+	unlock_memory_hotplug();
 
 	return 0;
 }
@@ -487,6 +508,14 @@ static pg_data_t __ref *hotadd_new_pgdat(int nid, u64 start)
 	/* init node's zones as empty zones, we don't have any present pages.*/
 	free_area_init_node(nid, zones_size, start_pfn, zholes_size);
 
+	/*
+	 * The node we allocated has no zone fallback lists. For avoiding
+	 * to access not-initialized zonelist, build here.
+	 */
+	mutex_lock(&zonelists_mutex);
+	build_all_zonelists(NULL);
+	mutex_unlock(&zonelists_mutex);
+
 	return pgdat;
 }
 
@@ -506,7 +535,7 @@ int mem_online_node(int nid)
 	pg_data_t	*pgdat;
 	int	ret;
 
-	lock_system_sleep();
+	lock_memory_hotplug();
 	pgdat = hotadd_new_pgdat(nid, 0);
 	if (pgdat) {
 		ret = -ENOMEM;
@@ -517,7 +546,7 @@ int mem_online_node(int nid)
 	BUG_ON(ret);
 
 out:
-	unlock_system_sleep();
+	unlock_memory_hotplug();
 	return ret;
 }
 
@@ -529,7 +558,7 @@ int __ref add_memory(int nid, u64 start, u64 size)
 	struct resource *res;
 	int ret;
 
-	lock_system_sleep();
+	lock_memory_hotplug();
 
 	res = register_memory_resource(start, size);
 	ret = -EEXIST;
@@ -576,7 +605,7 @@ error:
 		release_memory_resource(res);
 
 out:
-	unlock_system_sleep();
+	unlock_memory_hotplug();
 	return ret;
 }
 EXPORT_SYMBOL_GPL(add_memory);
@@ -841,7 +870,7 @@ check_pages_isolated(unsigned long start_pfn, unsigned long end_pfn)
 	return offlined;
 }
 
-static int offline_pages(unsigned long start_pfn,
+static int __ref offline_pages(unsigned long start_pfn,
 		  unsigned long end_pfn, unsigned long timeout)
 {
 	unsigned long pfn, nr_pages, expire;
@@ -861,7 +890,7 @@ static int offline_pages(unsigned long start_pfn,
 	if (!test_pages_in_a_zone(start_pfn, end_pfn))
 		return -EINVAL;
 
-	lock_system_sleep();
+	lock_memory_hotplug();
 
 	zone = page_zone(pfn_to_page(start_pfn));
 	node = zone_to_nid(zone);
@@ -952,7 +981,7 @@ repeat:
 	writeback_set_ratelimit();
 
 	memory_notify(MEM_OFFLINE, &arg);
-	unlock_system_sleep();
+	unlock_memory_hotplug();
 	return 0;
 
 failed_removal:
@@ -963,7 +992,7 @@ failed_removal:
 	undo_isolate_page_range(start_pfn, end_pfn);
 
 out:
-	unlock_system_sleep();
+	unlock_memory_hotplug();
 	return ret;
 }
 

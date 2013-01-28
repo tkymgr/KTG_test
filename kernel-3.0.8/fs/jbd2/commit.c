@@ -26,7 +26,9 @@
 #include <linux/backing-dev.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
+#include <linux/bitops.h>
 #include <trace/events/jbd2.h>
+#include <asm/system.h>
 
 /*
  * Default IO end handler for temporary BJ_IO buffer_heads.
@@ -104,6 +106,8 @@ static int journal_submit_commit_record(journal_t *journal,
 	int barrier_done = 0;
 	struct timespec now = current_kernel_time();
 
+	*cbh = NULL;
+
 	if (is_journal_aborted(journal))
 		return 0;
 
@@ -152,9 +156,9 @@ static int journal_submit_commit_record(journal_t *journal,
 		printk(KERN_WARNING
 		       "JBD: barrier-based sync failed on %s - "
 		       "disabling barriers\n", journal->j_devname);
-		spin_lock(&journal->j_state_lock);
+		write_lock(&journal->j_state_lock);
 		journal->j_flags &= ~JBD2_BARRIER;
-		spin_unlock(&journal->j_state_lock);
+		write_unlock(&journal->j_state_lock);
 
 		/* And try again, without the barrier */
 		lock_buffer(bh);

@@ -9,11 +9,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
  */
 
 #include <linux/slab.h>
@@ -42,7 +37,7 @@ static int sizes[MAX_TEST_BUFFERS];
 
 /* Anything that allocates or deallocates buffers must lock with this
  * mutex. */
-static DECLARE_MUTEX(buffer_lock);
+static DEFINE_SEMAPHORE(buffer_lock);
 
 /* Each buffer has a semaphore associated with it that will be held
  * for the duration of any operations on that buffer.  It also must be
@@ -175,7 +170,7 @@ static int dma_test_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 	file->private_data = priv;
 
-	init_MUTEX(&priv->sem);
+	sema_init(&priv->sem, 1);
 
 	/* Note, that these should be allocated together so we don't
 	 * waste 32 bytes for each. */
@@ -344,7 +339,7 @@ static int dma_test_init(void)
 		return ret;
 
 	for (i = 0; i < MAX_TEST_BUFFERS; i++)
-		init_MUTEX(&buffer_sems[i]);
+		sema_init(&buffer_sems[i], 1);
 
 	printk(KERN_ALERT "%s, minor number %d\n", __func__, dma_test_dev.minor);
 	return 0;

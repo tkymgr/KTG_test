@@ -32,6 +32,7 @@
 #include <linux/topology.h>
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
+#include <linux/compaction.h>
 #include <linux/notifier.h>
 #include <linux/rwsem.h>
 #include <linux/delay.h>
@@ -40,6 +41,8 @@
 #include <linux/memcontrol.h>
 #include <linux/delayacct.h>
 #include <linux/sysctl.h>
+#include <linux/oom.h>
+#include <linux/prefetch.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -76,8 +79,8 @@ struct scan_control {
 	int order;
 
 	/*
-	 * Intend to reclaim enough contenious memory rather than to reclaim
-	 * enough amount memory. I.e, it's the mode for high order allocation.
+	 * Intend to reclaim enough continuous memory rather than reclaim
+	 * enough amount of memory. i.e, mode for high order allocation.
 	 */
 	bool lumpy_reclaim_mode;
 
