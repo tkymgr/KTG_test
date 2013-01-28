@@ -1,6 +1,4 @@
 /*
- * linux/drivers/char/vc_screen.c
- *
  * Provide access to virtual console memory.
  * /dev/vcs0: the screen as it is being viewed right now (possibly scrolled)
  * /dev/vcsN: the screen of /dev/ttyN (1 <= N <= 63)
@@ -34,7 +32,6 @@
 #include <linux/kbd_kern.h>
 #include <linux/console.h>
 #include <linux/device.h>
-#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 #include <asm/byteorder.h>
@@ -463,10 +460,10 @@ vcs_open(struct inode *inode, struct file *filp)
 	unsigned int currcons = iminor(inode) & 127;
 	int ret = 0;
 	
-	lock_kernel();
+	tty_lock();
 	if(currcons && !vc_cons_allocated(currcons-1))
 		ret = -ENXIO;
-	unlock_kernel();
+	tty_unlock();
 	return ret;
 }
 

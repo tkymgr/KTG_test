@@ -23,16 +23,16 @@ struct restart_block {
 		};
 		/* For futex_wait and futex_wait_requeue_pi */
 		struct {
-			u32 *uaddr;
+			u32 __user *uaddr;
 			u32 val;
 			u32 flags;
 			u32 bitset;
 			u64 time;
-			u32 *uaddr2;
+			u32 __user *uaddr2;
 		} futex;
 		/* For nanosleep */
 		struct {
-			clockid_t index;
+			clockid_t clockid;
 			struct timespec __user *rmtp;
 #ifdef CONFIG_COMPAT
 			struct compat_timespec __user *compat_rmtp;

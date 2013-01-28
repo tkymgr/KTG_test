@@ -37,12 +37,12 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/signal.h>
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/usbdevice_fs.h>
+#include <linux/usb/hcd.h>	/* for usbcore internals */
 #include <linux/cdev.h>
 #include <linux/notifier.h>
 #include <linux/security.h>
@@ -52,7 +52,6 @@
 
 #include "hcd.h"	/* for usbcore internals */
 #include "usb.h"
-#include "hub.h"
 
 #define USB_MAXBUS			64
 #define USB_DEVICE_MAX			USB_MAXBUS * 128
@@ -122,7 +121,7 @@ static loff_t usbdev_lseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	lock_kernel();
+	mutex_lock(&file->f_dentry->d_inode->i_mutex);
 
 	switch (orig) {
 	case 0:
@@ -138,7 +137,7 @@ static loff_t usbdev_lseek(struct file *file, loff_t offset, int orig)
 		ret = -EINVAL;
 	}
 
-	unlock_kernel();
+	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
 	return ret;
 }
 
@@ -655,7 +654,6 @@ static int usbdev_open(struct inode *inode, struct file *file)
 	const struct cred *cred = current_cred();
 	int ret;
 
-	lock_kernel();
 	/* Protect against simultaneous removal or release */
 	mutex_lock(&usbfs_mutex);
 
@@ -669,6 +667,7 @@ static int usbdev_open(struct inode *inode, struct file *file)
 	/* usbdev device-node */
 	if (imajor(inode) == USB_DEVICE_MAJOR)
 		dev = usbdev_lookup_by_devt(inode->i_rdev);
+
 #ifdef CONFIG_USB_DEVICEFS
 	/* procfs file */
 	if (!dev) {
@@ -712,7 +711,6 @@ static int usbdev_open(struct inode *inode, struct file *file)
 		usb_put_dev(dev);
 	}
 	mutex_unlock(&usbfs_mutex);
-	unlock_kernel();
 	return ret;
 }
 

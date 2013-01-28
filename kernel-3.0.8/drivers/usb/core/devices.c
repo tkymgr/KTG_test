@@ -1,7 +1,8 @@
 /*
  * devices.c
  * (C) Copyright 1999 Randy Dunlap.
- * (C) Copyright 1999,2000 Thomas Sailer <sailer@ife.ee.ethz.ch>. (proc file per device)
+ * (C) Copyright 1999,2000 Thomas Sailer <sailer@ife.ee.ethz.ch>.
+ *     (proc file per device)
  * (C) Copyright 1999 Deti Fliegl (new USB architecture)
  *
  * This program is free software; you can redistribute it and/or modify
@@ -53,7 +54,6 @@
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/usb.h>
-#include <linux/smp_lock.h>
 #include <linux/usbdevice_fs.h>
 #include <linux/mutex.h>
 #include <asm/uaccess.h>
@@ -64,49 +64,49 @@
 /* Define ALLOW_SERIAL_NUMBER if you want to see the serial number of devices */
 #define ALLOW_SERIAL_NUMBER
 
-static const char *format_topo =
+static const char format_topo[] =
 /* T:  Bus=dd Lev=dd Prnt=dd Port=dd Cnt=dd Dev#=ddd Spd=dddd MxCh=dd */
 "\nT:  Bus=%2.2d Lev=%2.2d Prnt=%2.2d Port=%2.2d Cnt=%2.2d Dev#=%3d Spd=%-4s MxCh=%2d\n";
 
-static const char *format_string_manufacturer =
+static const char format_string_manufacturer[] =
 /* S:  Manufacturer=xxxx */
   "S:  Manufacturer=%.100s\n";
 
-static const char *format_string_product =
+static const char format_string_product[] =
 /* S:  Product=xxxx */
   "S:  Product=%.100s\n";
 
 #ifdef ALLOW_SERIAL_NUMBER
-static const char *format_string_serialnumber =
+static const char format_string_serialnumber[] =
 /* S:  SerialNumber=xxxx */
   "S:  SerialNumber=%.100s\n";
 #endif
 
-static const char *format_bandwidth =
+static const char format_bandwidth[] =
 /* B:  Alloc=ddd/ddd us (xx%), #Int=ddd, #Iso=ddd */
   "B:  Alloc=%3d/%3d us (%2d%%), #Int=%3d, #Iso=%3d\n";
 
-static const char *format_device1 =
+static const char format_device1[] =
 /* D:  Ver=xx.xx Cls=xx(sssss) Sub=xx Prot=xx MxPS=dd #Cfgs=dd */
   "D:  Ver=%2x.%02x Cls=%02x(%-5s) Sub=%02x Prot=%02x MxPS=%2d #Cfgs=%3d\n";
 
-static const char *format_device2 =
+static const char format_device2[] =
 /* P:  Vendor=xxxx ProdID=xxxx Rev=xx.xx */
   "P:  Vendor=%04x ProdID=%04x Rev=%2x.%02x\n";
 
-static const char *format_config =
+static const char format_config[] =
 /* C:  #Ifs=dd Cfg#=dd Atr=xx MPwr=dddmA */
   "C:%c #Ifs=%2d Cfg#=%2d Atr=%02x MxPwr=%3dmA\n";
 
-static const char *format_iad =
+static const char format_iad[] =
 /* A:  FirstIf#=dd IfCount=dd Cls=xx(sssss) Sub=xx Prot=xx */
   "A:  FirstIf#=%2d IfCount=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x\n";
 
-static const char *format_iface =
+static const char format_iface[] =
 /* I:  If#=dd Alt=dd #EPs=dd Cls=xx(sssss) Sub=xx Prot=xx Driver=xxxx*/
   "I:%c If#=%2d Alt=%2d #EPs=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x Driver=%s\n";
 
-static const char *format_endpt =
+static const char format_endpt[] =
 /* E:  Ad=xx(s) Atr=xx(ssss) MxPS=dddd Ivl=D?s */
   "E:  Ad=%02x(%c) Atr=%02x(%-4s) MxPS=%4d Ivl=%d%cs\n";
 
@@ -130,8 +130,8 @@ struct class_info {
 	char *class_name;
 };
 
-static const struct class_info clas_info[] =
-{					/* max. 5 chars. per name string */
+static const struct class_info clas_info[] = {
+	/* max. 5 chars. per name string */
 	{USB_CLASS_PER_INTERFACE,	">ifc"},
 	{USB_CLASS_AUDIO,		"audio"},
 	{USB_CLASS_COMM,		"comm."},
@@ -183,8 +183,10 @@ static char *usb_dump_endpoint_descriptor(int speed, char *start, char *end,
 
 	if (speed == USB_SPEED_HIGH) {
 		switch (le16_to_cpu(desc->wMaxPacketSize) & (0x03 << 11)) {
-		case 1 << 11:	bandwidth = 2; break;
-		case 2 << 11:	bandwidth = 3; break;
+		case 1 << 11:
+			bandwidth = 2; break;
+		case 2 << 11:
+			bandwidth = 3; break;
 		}
 	}
 
@@ -192,7 +194,7 @@ static char *usb_dump_endpoint_descriptor(int speed, char *start, char *end,
 	switch (usb_endpoint_type(desc)) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		type = "Ctrl";
-		if (speed == USB_SPEED_HIGH) 	/* uframes per NAK */
+		if (speed == USB_SPEED_HIGH)	/* uframes per NAK */
 			interval = desc->bInterval;
 		else
 			interval = 0;
@@ -636,7 +638,6 @@ static unsigned int usb_device_poll(struct file *file,
 	struct usb_device_status *st = file->private_data;
 	unsigned int mask = 0;
 
-	lock_kernel();
 	if (!st) {
 		st = kmalloc(sizeof(struct usb_device_status), GFP_KERNEL);
 
@@ -649,7 +650,6 @@ static unsigned int usb_device_poll(struct file *file,
 		}
 		/* we haven't lost - check for allocation failure now */
 		if (!st) {
-			unlock_kernel();
 			return POLLIN;
 		}
 
@@ -668,7 +668,6 @@ lost_race:
 	if (st->lastev != conndiscevcnt)
 		mask |= POLLIN;
 	st->lastev = conndiscevcnt;
-	unlock_kernel();
 	return mask;
 }
 
@@ -689,7 +688,7 @@ static loff_t usb_device_lseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	lock_kernel();
+	mutex_lock(&file->f_dentry->d_inode->i_mutex);
 
 	switch (orig) {
 	case 0:
@@ -705,7 +704,7 @@ static loff_t usb_device_lseek(struct file *file, loff_t offset, int orig)
 		ret = -EINVAL;
 	}
 
-	unlock_kernel();
+	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
 	return ret;
 }
 

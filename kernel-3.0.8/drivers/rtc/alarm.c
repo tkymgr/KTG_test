@@ -13,7 +13,7 @@
  *
  */
 
-#include <linux/module.h>
+#include <asm/mach/time.h>
 #include <linux/android_alarm.h>
 #include <linux/device.h>
 #include <linux/miscdevice.h>
@@ -21,10 +21,8 @@
 #include <linux/rtc.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
-//#include <linux/sysdev.h>
+#include <linux/sysdev.h>
 #include <linux/wakelock.h>
-
-#include <asm/mach/time.h>
 
 #define ANDROID_ALARM_PRINT_ERROR (1U << 0)
 #define ANDROID_ALARM_PRINT_INIT_STATUS (1U << 1)
@@ -99,7 +97,7 @@ static void update_timer_locked(struct alarm_queue *base, bool head_removed)
 	}
 
 	hrtimer_try_to_cancel(&base->timer);
-	base->timer._expires = ktime_add(base->delta, alarm->expires);
+	base->timer.node.expires = ktime_add(base->delta, alarm->expires);
 	base->timer._softexpires = ktime_add(base->delta, alarm->softexpires);
 	hrtimer_start_expires(&base->timer, HRTIMER_MODE_ABS);
 }
@@ -251,13 +249,6 @@ int alarm_set_rtc(struct timespec new_time)
 	unsigned long flags;
 	struct rtc_time rtc_new_rtc_time;
 	struct timespec tmp_time;
-
-#if 0 //def CONFIG_RTC_TIME_MIN
-	if (new_time.tv_sec < CONFIG_RTC_TIME_MIN) {
-		pr_alarm(ERROR, "alarm_set_rtc: Invalid time\n");
-		return -EINVAL;
-	}
-#endif
 
 	rtc_time_to_tm(new_time.tv_sec, &rtc_new_rtc_time);
 

@@ -73,7 +73,6 @@
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
 #include <linux/serial.h>
-#include <linux/smp_lock.h>
 #include <linux/string.h>
 #include <linux/fcntl.h>
 #include <linux/ptrace.h>
@@ -1017,6 +1016,7 @@ static void rp_close(struct tty_struct *tty, struct file *filp)
 	if (tty_port_close_start(port, tty, filp) == 0)
 		return;
 
+	mutex_lock(&port->mutex);
 	cp = &info->channel;
 	/*
 	 * Before we drop DTR, make sure the UART transmitter
@@ -1060,9 +1060,13 @@ static void rp_close(struct tty_struct *tty, struct file *filp)
 			info->xmit_buf = NULL;
 		}
 	}
+	spin_lock_irq(&port->lock);
 	info->port.flags &= ~(ASYNC_INITIALIZED | ASYNC_CLOSING | ASYNC_NORMAL_ACTIVE);
 	tty->closing = 0;
+	spin_unlock_irq(&port->lock);
+	mutex_unlock(&port->mutex);
 	tty_port_tty_set(port, NULL);
+
 	wake_up_interruptible(&port->close_wait);
 	complete_all(&info->close_wait);
 	atomic_dec(&rp_num_ports_open);
@@ -1165,7 +1169,7 @@ static int sGetChanRI(CHANNEL_T * ChP)
  *  Returns the state of the serial modem control lines.  These next 2 functions 
  *  are the way kernel versions > 2.5 handle modem control lines rather than IOCTLs.
  */
-static int rp_tiocmget(struct tty_struct *tty, struct file *file)
+static int rp_tiocmget(struct tty_struct *tty)
 {
 	struct r_port *info = tty->driver_data;
 	unsigned int control, result, ChanStatus;
@@ -1185,8 +1189,8 @@ static int rp_tiocmget(struct tty_struct *tty, struct file *file)
 /* 
  *  Sets the modem control lines
  */
-static int rp_tiocmset(struct tty_struct *tty, struct file *file,
-		    unsigned int set, unsigned int clear)
+static int rp_tiocmset(struct tty_struct *tty,
+				unsigned int set, unsigned int clear)
 {
 	struct r_port *info = tty->driver_data;
 
@@ -1210,11 +1214,13 @@ static int get_config(struct r_port *info, struct rocket_config __user *retinfo)
 	if (!retinfo)
 		return -EFAULT;
 	memset(&tmp, 0, sizeof (tmp));
+	mutex_lock(&info->port.mutex);
 	tmp.line = info->line;
 	tmp.flags = info->flags;
 	tmp.close_delay = info->port.close_delay;
 	tmp.closing_wait = info->port.closing_wait;
 	tmp.port = rcktpt_io_addr[(info->line >> 5) & 3];
+	mutex_unlock(&info->port.mutex);
 
 	if (copy_to_user(retinfo, &tmp, sizeof (*retinfo)))
 		return -EFAULT;
@@ -1229,12 +1235,16 @@ static int set_config(struct tty_struct *tty, struct r_port *info,
 	if (copy_from_user(&new_serial, new_info, sizeof (new_serial)))
 		return -EFAULT;
 
+	mutex_lock(&info->port.mutex);
 	if (!capable(CAP_SYS_ADMIN))
 	{
-		if ((new_serial.flags & ~ROCKET_USR_MASK) != (info->flags & ~ROCKET_USR_MASK))
+		if ((new_serial.flags & ~ROCKET_USR_MASK) != (info->flags & ~ROCKET_USR_MASK)) {
+			mutex_unlock(&info->port.mutex);
 			return -EPERM;
+		}
 		info->flags = ((info->flags & ~ROCKET_USR_MASK) | (new_serial.flags & ROCKET_USR_MASK));
 		configure_r_port(tty, info, NULL);
+		mutex_unlock(&info->port.mutex);
 		return 0;
 	}
 
@@ -1250,6 +1260,7 @@ static int set_config(struct tty_struct *tty, struct r_port *info,
 		tty->alt_speed = 230400;
 	if ((info->flags & ROCKET_SPD_MASK) == ROCKET_SPD_WARP)
 		tty->alt_speed = 460800;
+	mutex_unlock(&info->port.mutex);
 
 	configure_r_port(tty, info, NULL);
 	return 0;
@@ -1315,7 +1326,7 @@ static int get_version(struct r_port *info, struct rocket_version __user *retver
 }
 
 /*  IOCTL call handler into the driver */
-static int rp_ioctl(struct tty_struct *tty, struct file *file,
+static int rp_ioctl(struct tty_struct *tty,
 		    unsigned int cmd, unsigned long arg)
 {
 	struct r_port *info = tty->driver_data;
@@ -1324,8 +1335,6 @@ static int rp_ioctl(struct tty_struct *tty, struct file *file,
 
 	if (cmd != RCKP_GET_PORTS && rocket_paranoia_check(info, "rp_ioctl"))
 		return -ENXIO;
-
-	lock_kernel();
 
 	switch (cmd) {
 	case RCKP_GET_STRUCT:
@@ -1350,7 +1359,6 @@ static int rp_ioctl(struct tty_struct *tty, struct file *file,
 	default:
 		ret = -ENOIOCTLCMD;
 	}
-	unlock_kernel();
 	return ret;
 }
 
@@ -1372,7 +1380,6 @@ static void rp_send_xchar(struct tty_struct *tty, char ch)
 static void rp_throttle(struct tty_struct *tty)
 {
 	struct r_port *info = tty->driver_data;
-	CHANNEL_t *cp;
 
 #ifdef ROCKET_DEBUG_THROTTLE
 	printk(KERN_INFO "throttle %s: %d....\n", tty->name,
@@ -1382,7 +1389,6 @@ static void rp_throttle(struct tty_struct *tty)
 	if (rocket_paranoia_check(info, "rp_throttle"))
 		return;
 
-	cp = &info->channel;
 	if (I_IXOFF(tty))
 		rp_send_xchar(tty, STOP_CHAR(tty));
 
@@ -1392,7 +1398,6 @@ static void rp_throttle(struct tty_struct *tty)
 static void rp_unthrottle(struct tty_struct *tty)
 {
 	struct r_port *info = tty->driver_data;
-	CHANNEL_t *cp;
 #ifdef ROCKET_DEBUG_THROTTLE
 	printk(KERN_INFO "unthrottle %s: %d....\n", tty->name,
 	       tty->ldisc.chars_in_buffer(tty));
@@ -1401,7 +1406,6 @@ static void rp_unthrottle(struct tty_struct *tty)
 	if (rocket_paranoia_check(info, "rp_throttle"))
 		return;
 
-	cp = &info->channel;
 	if (I_IXOFF(tty))
 		rp_send_xchar(tty, START_CHAR(tty));
 
@@ -1471,7 +1475,6 @@ static void rp_wait_until_sent(struct tty_struct *tty, int timeout)
 	       jiffies);
 	printk(KERN_INFO "cps=%d...\n", info->cps);
 #endif
-	lock_kernel();
 	while (1) {
 		txcnt = sGetTxCnt(cp);
 		if (!txcnt) {
@@ -1499,7 +1502,6 @@ static void rp_wait_until_sent(struct tty_struct *tty, int timeout)
 			break;
 	}
 	__set_current_state(TASK_RUNNING);
-	unlock_kernel();
 #ifdef ROCKET_DEBUG_WAIT_UNTIL_SENT
 	printk(KERN_INFO "txcnt = %d (jiff=%lu)...done\n", txcnt, jiffies);
 #endif
@@ -1512,6 +1514,7 @@ static void rp_hangup(struct tty_struct *tty)
 {
 	CHANNEL_t *cp;
 	struct r_port *info = tty->driver_data;
+	unsigned long flags;
 
 	if (rocket_paranoia_check(info, "rp_hangup"))
 		return;
@@ -1520,11 +1523,15 @@ static void rp_hangup(struct tty_struct *tty)
 	printk(KERN_INFO "rp_hangup of ttyR%d...\n", info->line);
 #endif
 	rp_flush_buffer(tty);
-	if (info->port.flags & ASYNC_CLOSING)
+	spin_lock_irqsave(&info->port.lock, flags);
+	if (info->port.flags & ASYNC_CLOSING) {
+		spin_unlock_irqrestore(&info->port.lock, flags);
 		return;
+	}
 	if (info->port.count)
 		atomic_dec(&rp_num_ports_open);
 	clear_bit((info->aiop * 8) + info->chan, (void *) &xmit_flags[info->board]);
+	spin_unlock_irqrestore(&info->port.lock, flags);
 
 	tty_port_hangup(&info->port);
 
@@ -1535,7 +1542,7 @@ static void rp_hangup(struct tty_struct *tty)
 	sDisCTSFlowCtl(cp);
 	sDisTxSoftFlowCtl(cp);
 	sClrTxXOFF(cp);
-	info->port.flags &= ~ASYNC_INITIALIZED;
+	clear_bit(ASYNCB_INITIALIZED, &info->port.flags);
 
 	wake_up_interruptible(&info->port.open_wait);
 }
@@ -1711,12 +1718,9 @@ static int rp_write_room(struct tty_struct *tty)
 static int rp_chars_in_buffer(struct tty_struct *tty)
 {
 	struct r_port *info = tty->driver_data;
-	CHANNEL_t *cp;
 
 	if (rocket_paranoia_check(info, "rp_chars_in_buffer"))
 		return 0;
-
-	cp = &info->channel;
 
 #ifdef ROCKET_DEBUG_WRITE
 	printk(KERN_INFO "rp_chars_in_buffer returns %d...\n", info->xmit_cnt);
@@ -1753,7 +1757,7 @@ static void rp_flush_buffer(struct tty_struct *tty)
 
 #ifdef CONFIG_PCI
 
-static struct pci_device_id __devinitdata rocket_pci_ids[] = {
+static struct pci_device_id __devinitdata __used rocket_pci_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_RP, PCI_ANY_ID) },
 	{ }
 };
@@ -1768,7 +1772,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 {
 	int num_aiops, aiop, max_num_aiops, num_chan, chan;
 	unsigned int aiopio[MAX_AIOPS_PER_BOARD];
-	char *str, *board_type;
 	CONTROLLER_t *ctlp;
 
 	int fast_clock = 0;
@@ -1789,7 +1792,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 	/*  Depending on the model, set up some config variables */
 	switch (dev->device) {
 	case PCI_DEVICE_ID_RP4QUAD:
-		str = "Quadcable";
 		max_num_aiops = 1;
 		ports_per_aiop = 4;
 		rocketModel[i].model = MODEL_RP4QUAD;
@@ -1797,42 +1799,36 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 4;
 		break;
 	case PCI_DEVICE_ID_RP8OCTA:
-		str = "Octacable";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_RP8OCTA;
 		strcpy(rocketModel[i].modelString, "RocketPort 8 port w/octa cable");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_URP8OCTA:
-		str = "Octacable";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_UPCI_RP8OCTA;
 		strcpy(rocketModel[i].modelString, "RocketPort UPCI 8 port w/octa cable");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_RP8INTF:
-		str = "8";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_RP8INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort 8 port w/external I/F");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_URP8INTF:
-		str = "8";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_UPCI_RP8INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort UPCI 8 port w/external I/F");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_RP8J:
-		str = "8J";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_RP8J;
 		strcpy(rocketModel[i].modelString, "RocketPort 8 port w/RJ11 connectors");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_RP4J:
-		str = "4J";
 		max_num_aiops = 1;
 		ports_per_aiop = 4;
 		rocketModel[i].model = MODEL_RP4J;
@@ -1840,56 +1836,48 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 4;
 		break;
 	case PCI_DEVICE_ID_RP8SNI:
-		str = "8 (DB78 Custom)";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_RP8SNI;
 		strcpy(rocketModel[i].modelString, "RocketPort 8 port w/ custom DB78");
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_RP16SNI:
-		str = "16 (DB78 Custom)";
 		max_num_aiops = 2;
 		rocketModel[i].model = MODEL_RP16SNI;
 		strcpy(rocketModel[i].modelString, "RocketPort 16 port w/ custom DB78");
 		rocketModel[i].numPorts = 16;
 		break;
 	case PCI_DEVICE_ID_RP16INTF:
-		str = "16";
 		max_num_aiops = 2;
 		rocketModel[i].model = MODEL_RP16INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort 16 port w/external I/F");
 		rocketModel[i].numPorts = 16;
 		break;
 	case PCI_DEVICE_ID_URP16INTF:
-		str = "16";
 		max_num_aiops = 2;
 		rocketModel[i].model = MODEL_UPCI_RP16INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort UPCI 16 port w/external I/F");
 		rocketModel[i].numPorts = 16;
 		break;
 	case PCI_DEVICE_ID_CRP16INTF:
-		str = "16";
 		max_num_aiops = 2;
 		rocketModel[i].model = MODEL_CPCI_RP16INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort Compact PCI 16 port w/external I/F");
 		rocketModel[i].numPorts = 16;
 		break;
 	case PCI_DEVICE_ID_RP32INTF:
-		str = "32";
 		max_num_aiops = 4;
 		rocketModel[i].model = MODEL_RP32INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort 32 port w/external I/F");
 		rocketModel[i].numPorts = 32;
 		break;
 	case PCI_DEVICE_ID_URP32INTF:
-		str = "32";
 		max_num_aiops = 4;
 		rocketModel[i].model = MODEL_UPCI_RP32INTF;
 		strcpy(rocketModel[i].modelString, "RocketPort UPCI 32 port w/external I/F");
 		rocketModel[i].numPorts = 32;
 		break;
 	case PCI_DEVICE_ID_RPP4:
-		str = "Plus Quadcable";
 		max_num_aiops = 1;
 		ports_per_aiop = 4;
 		altChanRingIndicator++;
@@ -1899,7 +1887,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 4;
 		break;
 	case PCI_DEVICE_ID_RPP8:
-		str = "Plus Octacable";
 		max_num_aiops = 2;
 		ports_per_aiop = 4;
 		altChanRingIndicator++;
@@ -1909,7 +1896,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 8;
 		break;
 	case PCI_DEVICE_ID_RP2_232:
-		str = "Plus 2 (RS-232)";
 		max_num_aiops = 1;
 		ports_per_aiop = 2;
 		altChanRingIndicator++;
@@ -1919,7 +1905,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 2;
 		break;
 	case PCI_DEVICE_ID_RP2_422:
-		str = "Plus 2 (RS-422)";
 		max_num_aiops = 1;
 		ports_per_aiop = 2;
 		altChanRingIndicator++;
@@ -1932,7 +1917,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 
 		max_num_aiops = 1;
 		ports_per_aiop = 6;
-		str = "6-port";
 
 		/*  If revision is 1, the rocketmodem flash must be loaded.
 		 *  If it is 2 it is a "socketed" version. */
@@ -1950,7 +1934,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 	case PCI_DEVICE_ID_RP4M:
 		max_num_aiops = 1;
 		ports_per_aiop = 4;
-		str = "4-port";
 		if (dev->revision == 1) {
 			rcktpt_type[i] = ROCKET_TYPE_MODEMII;
 			rocketModel[i].loadrm2 = 1;
@@ -1963,7 +1946,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rocketModel[i].numPorts = 4;
 		break;
 	default:
-		str = "(unknown/unsupported)";
 		max_num_aiops = 0;
 		break;
 	}
@@ -1989,14 +1971,12 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 			if (!
 			    (sInW(ConfigIO + _PCI_9030_GPIO_CTRL) &
 			     PCI_GPIO_CTRL_8PORT)) {
-				str = "Quadcable";
 				ports_per_aiop = 4;
 				rocketModel[i].numPorts = 4;
 			}
 		}
 		break;
 	case PCI_DEVICE_ID_UPCI_RM3_8PORT:
-		str = "8 ports";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_UPCI_RM3_8PORT;
 		strcpy(rocketModel[i].modelString, "RocketModem III 8 port");
@@ -2007,7 +1987,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rcktpt_type[i] = ROCKET_TYPE_MODEMIII;
 		break;
 	case PCI_DEVICE_ID_UPCI_RM3_4PORT:
-		str = "4 ports";
 		max_num_aiops = 1;
 		rocketModel[i].model = MODEL_UPCI_RM3_4PORT;
 		strcpy(rocketModel[i].modelString, "RocketModem III 4 port");
@@ -2018,21 +1997,6 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 		rcktpt_type[i] = ROCKET_TYPE_MODEMIII;
 		break;
 	default:
-		break;
-	}
-
-	switch (rcktpt_type[i]) {
-	case ROCKET_TYPE_MODEM:
-		board_type = "RocketModem";
-		break;
-	case ROCKET_TYPE_MODEMII:
-		board_type = "RocketModem II";
-		break;
-	case ROCKET_TYPE_MODEMIII:
-		board_type = "RocketModem III";
-		break;
-	default:
-		board_type = "RocketPort";
 		break;
 	}
 
@@ -2049,7 +2013,7 @@ static __init int register_PCI(int i, struct pci_dev *dev)
 			sClockPrescale = 0x19;
 			rp_baud_base[i] = 230400;
 		} else {
-			/* mod 4 (devide by 5) prescale */
+			/* mod 4 (divide by 5) prescale */
 			sClockPrescale = 0x14;
 			rp_baud_base[i] = 460800;
 		}
@@ -2172,7 +2136,7 @@ static int __init init_ISA(int i)
 		sClockPrescale = 0x19;	/* mod 9 (divide by 10) prescale */
 		rp_baud_base[i] = 230400;
 	} else {
-		sClockPrescale = 0x14;	/* mod 4 (devide by 5) prescale */
+		sClockPrescale = 0x14;	/* mod 4 (divide by 5) prescale */
 		rp_baud_base[i] = 460800;
 	}
 
@@ -2334,7 +2298,7 @@ static int __init rp_init(void)
 	ret = tty_register_driver(rocket_driver);
 	if (ret < 0) {
 		printk(KERN_ERR "Couldn't install tty RocketPort driver\n");
-		goto err_tty;
+		goto err_controller;
 	}
 
 #ifdef ROCKET_DEBUG_OPEN
@@ -2369,6 +2333,9 @@ static int __init rp_init(void)
 	return 0;
 err_ttyu:
 	tty_unregister_driver(rocket_driver);
+err_controller:
+	if (controller)
+		release_region(controller, 4);
 err_tty:
 	put_tty_driver(rocket_driver);
 err:

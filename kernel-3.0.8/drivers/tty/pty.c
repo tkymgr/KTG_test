@@ -1,6 +1,4 @@
 /*
- *  linux/drivers/char/pty.c
- *
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
  *  Added support for a Unix98-style ptmx device.
@@ -23,7 +21,6 @@
 #include <linux/major.h>
 #include <linux/mm.h>
 #include <linux/init.h>
-#include <linux/smp_lock.h>
 #include <linux/sysctl.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
@@ -62,7 +59,9 @@ static void pty_close(struct tty_struct *tty, struct file *filp)
 		if (tty->driver == ptm_driver)
 			devpts_pty_kill(tty->link);
 #endif
+		tty_unlock();
 		tty_vhangup(tty->link);
+		tty_lock();
 	}
 }
 
@@ -635,11 +634,14 @@ static int __ptmx_open(struct inode *inode, struct file *filp)
 	nonseekable_open(inode, filp);
 
 	/* find a device that is not in use. */
+	tty_lock();
 	index = devpts_new_index(inode);
+	tty_unlock();
 	if (index < 0)
 		return index;
 
 	mutex_lock(&tty_mutex);
+	tty_lock();
 	tty = tty_init_dev(ptm_driver, index, 1);
 	mutex_unlock(&tty_mutex);
 
@@ -660,10 +662,12 @@ static int __ptmx_open(struct inode *inode, struct file *filp)
 	if (!retval)
 		return 0;
 out1:
+	tty_unlock();
 	tty_release(inode, filp);
 	return retval;
 out:
 	devpts_kill_index(inode, index);
+	tty_unlock();
 	return retval;
 }
 
@@ -671,9 +675,9 @@ static int ptmx_open(struct inode *inode, struct file *filp)
 {
 	int ret;
 
-	lock_kernel();
+	tty_unlock();
 	ret = __ptmx_open(inode, filp);
-	unlock_kernel();
+	tty_unlock();
 	return ret;
 }
 

@@ -27,7 +27,6 @@
 #include <linux/init.h>
 #include <linux/blkdev.h>
 #include <linux/parser.h>
-#include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
 #include <linux/exportfs.h>
 #include <linux/vfs.h>
@@ -411,9 +410,6 @@ static void ext3_put_super (struct super_block * sb)
 	int i, err;
 
 	dquot_disable(sb, -1, DQUOT_USAGE_ENABLED | DQUOT_LIMITS_ENABLED);
-
-	lock_kernel();
-
 	ext3_xattr_put_super(sb);
 	err = journal_destroy(sbi->s_journal);
 	sbi->s_journal = NULL;
@@ -462,8 +458,6 @@ static void ext3_put_super (struct super_block * sb)
 	sb->s_fs_info = NULL;
 	kfree(sbi->s_blockgroup_lock);
 	kfree(sbi);
-
-	unlock_kernel();
 }
 
 static struct kmem_cache *ext3_inode_cachep;
@@ -1640,8 +1634,6 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 	sbi->s_resgid = EXT3_DEF_RESGID;
 	sbi->s_sb_block = sb_block;
 
-	unlock_kernel();
-
 	blocksize = sb_min_blocksize(sb, EXT3_MIN_BLOCK_SIZE);
 	if (!blocksize) {
 		ext3_msg(sb, KERN_ERR, "error: unable to set blocksize");
@@ -2046,7 +2038,6 @@ static int ext3_fill_super (struct super_block *sb, void *data, int silent)
 		test_opt(sb,DATA_FLAGS) == EXT3_MOUNT_ORDERED_DATA ? "ordered":
 		"writeback");
 
-	lock_kernel();
 	return 0;
 
 cantfind_ext3:
@@ -2076,7 +2067,6 @@ out_fail:
 	sb->s_fs_info = NULL;
 	kfree(sbi->s_blockgroup_lock);
 	kfree(sbi);
-	lock_kernel();
 	return ret;
 }
 
@@ -2559,8 +2549,6 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 	int i;
 #endif
 
-	lock_kernel();
-
 	/* Store the original options */
 	lock_super(sb);
 	old_sb_flags = sb->s_flags;
@@ -2669,7 +2657,6 @@ static int ext3_remount (struct super_block * sb, int * flags, char * data)
 			kfree(old_opts.s_qf_names[i]);
 #endif
 	unlock_super(sb);
-	unlock_kernel();
 
 	if (enable_quota)
 		dquot_resume(sb, -1);
@@ -2690,7 +2677,6 @@ restore_opts:
 	}
 #endif
 	unlock_super(sb);
-	unlock_kernel();
 	return err;
 }
 

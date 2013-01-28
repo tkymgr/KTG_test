@@ -1,6 +1,4 @@
 /*
- *  linux/drivers/char/vt.c
- *
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
@@ -89,7 +87,6 @@
 #include <linux/mutex.h>
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
-#include <linux/smp_lock.h>
 #include <linux/tiocl.h>
 #include <linux/kbd_kern.h>
 #include <linux/consolemap.h>
@@ -187,6 +184,7 @@ static DECLARE_WORK(console_work, console_callback);
  * fg_console is the current virtual console,
  * last_console is the last used one,
  * want_console is the console we want to switch to,
+ * saved_* variants are for save/restore around kernel debugger enter/leave
  */
 int fg_console;
 int last_console;
@@ -1249,7 +1247,7 @@ static void default_attr(struct vc_data *vc)
 	vc->vc_color = vc->vc_def_color;
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void csi_m(struct vc_data *vc)
 {
 	int i;
@@ -1393,7 +1391,7 @@ int mouse_reporting(void)
 	return vc_cons[fg_console].d->vc_report_mouse;
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void set_mode(struct vc_data *vc, int on_off)
 {
 	int i;
@@ -1463,7 +1461,7 @@ static void set_mode(struct vc_data *vc, int on_off)
 		}
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void setterm_command(struct vc_data *vc)
 {
 	switch(vc->vc_par[0]) {
@@ -1523,7 +1521,7 @@ static void setterm_command(struct vc_data *vc)
 	}
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void csi_at(struct vc_data *vc, unsigned int nr)
 {
 	if (nr > vc->vc_cols - vc->vc_x)
@@ -1533,7 +1531,7 @@ static void csi_at(struct vc_data *vc, unsigned int nr)
 	insert_char(vc, nr);
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void csi_L(struct vc_data *vc, unsigned int nr)
 {
 	if (nr > vc->vc_rows - vc->vc_y)
@@ -1544,7 +1542,7 @@ static void csi_L(struct vc_data *vc, unsigned int nr)
 	vc->vc_need_wrap = 0;
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void csi_P(struct vc_data *vc, unsigned int nr)
 {
 	if (nr > vc->vc_cols - vc->vc_x)
@@ -1554,7 +1552,7 @@ static void csi_P(struct vc_data *vc, unsigned int nr)
 	delete_char(vc, nr);
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void csi_M(struct vc_data *vc, unsigned int nr)
 {
 	if (nr > vc->vc_rows - vc->vc_y)
@@ -1565,7 +1563,7 @@ static void csi_M(struct vc_data *vc, unsigned int nr)
 	vc->vc_need_wrap = 0;
 }
 
-/* console_sem is held (except via vc_init->reset_terminal */
+/* console_lock is held (except via vc_init->reset_terminal */
 static void save_cur(struct vc_data *vc)
 {
 	vc->vc_saved_x		= vc->vc_x;
@@ -1581,7 +1579,7 @@ static void save_cur(struct vc_data *vc)
 	vc->vc_saved_G1		= vc->vc_G1_charset;
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void restore_cur(struct vc_data *vc)
 {
 	gotoxy(vc, vc->vc_saved_x, vc->vc_saved_y);
@@ -1603,7 +1601,7 @@ enum { ESnormal, ESesc, ESsquare, ESgetpars, ESgotpars, ESfunckey,
 	EShash, ESsetG0, ESsetG1, ESpercent, ESignore, ESnonstd,
 	ESpalette };
 
-/* console_sem is held (except via vc_init()) */
+/* console_lock is held (except via vc_init()) */
 static void reset_terminal(struct vc_data *vc, int do_clear)
 {
 	vc->vc_top		= 0;
@@ -1663,7 +1661,7 @@ static void reset_terminal(struct vc_data *vc, int do_clear)
 	    csi_J(vc, 2);
 }
 
-/* console_sem is held */
+/* console_lock is held */
 static void do_con_trol(struct tty_struct *tty, struct vc_data *vc, int c)
 {
 	/*
@@ -2097,7 +2095,7 @@ static int is_double_width(uint32_t ucs)
 	return bisearch(ucs, double_width, ARRAY_SIZE(double_width) - 1);
 }
 
-/* acquires console_sem */
+/* acquires console_lock */
 static int do_con_write(struct tty_struct *tty, const unsigned char *buf, int count)
 {
 #ifdef VT_BUF_VRAM_ONLY
@@ -2366,7 +2364,7 @@ rescan_last_byte:
  * us to do the switches asynchronously (needed when we want
  * to switch due to a keyboard interrupt).  Synchronization
  * with other console code and prevention of re-entrancy is
- * ensured with console_sem.
+ * ensured with console_lock.
  */
 static void console_callback(struct work_struct *ignored)
 {
@@ -2581,7 +2579,7 @@ static struct console vt_console_driver = {
  */
 
 /*
- * Generally a bit racy with respect to console_sem().
+ * Generally a bit racy with respect to console_lock();.
  *
  * There are some functions which don't need it.
  *
@@ -2603,8 +2601,6 @@ int tioclinux(struct tty_struct *tty, unsigned long arg)
 	if (get_user(type, p))
 		return -EFAULT;
 	ret = 0;
-
-	lock_kernel();
 
 	switch (type)
 	{
@@ -2680,7 +2676,6 @@ int tioclinux(struct tty_struct *tty, unsigned long arg)
 			ret = -EINVAL;
 			break;
 	}
-	unlock_kernel();
 	return ret;
 }
 
@@ -3072,7 +3067,7 @@ static int bind_con_driver(const struct consw *csw, int first, int last,
 			clear_buffer_attributes(vc);
 	}
 
-	printk("Console: switching ");
+	pr_info("Console: switching ");
 	if (!deflt)
 		printk("consoles %d-%d ", first+1, last+1);
 	if (j >= 0) {
@@ -3699,7 +3694,8 @@ void do_unblank_screen(int leaving_gfx)
 		return;
 	if (!vc_cons_allocated(fg_console)) {
 		/* impossible */
-		printk("unblank_screen: tty %d not allocated ??\n", fg_console+1);
+		pr_warning("unblank_screen: tty %d not allocated ??\n",
+			   fg_console+1);
 		return;
 	}
 	vc = vc_cons[fg_console].d;
@@ -3864,7 +3860,7 @@ void reset_palette(struct vc_data *vc)
  *  of 32 pixels. Userspace fontdata is stored with 32 bytes (shorts/ints, 
  *  depending on width) reserved for each character which is kinda wasty, but 
  *  this is done in order to maintain compatibility with the EGA/VGA fonts. It 
- *  is upto the actual low-level console-driver convert data into its favorite
+ *  is up to the actual low-level console-driver convert data into its favorite
  *  format (maybe we should add a `fontoffset' field to the `display'
  *  structure so we won't have to convert the fontdata all the time.
  *  /Jes

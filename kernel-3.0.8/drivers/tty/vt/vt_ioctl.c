@@ -1,6 +1,4 @@
 /*
- *  linux/drivers/char/vt_ioctl.c
- *
  *  Copyright (C) 1992 obz under the linux copyright
  *
  *  Dynamic diacritical handling - aeb@cwi.nl - Dec 1993
@@ -27,7 +25,6 @@
 #include <linux/console.h>
 #include <linux/consolemap.h>
 #include <linux/signal.h>
-#include <linux/smp_lock.h>
 #include <linux/timex.h>
 
 #include <asm/io.h>
@@ -510,7 +507,7 @@ int vt_ioctl(struct tty_struct *tty, struct file * file,
 
 	console = vc->vc_num;
 
-	lock_kernel();
+	tty_lock();
 
 	if (!vc_cons_allocated(console)) { 	/* impossible? */
 		ret = -ENOIOCTLCMD;
@@ -1337,7 +1334,7 @@ int vt_ioctl(struct tty_struct *tty, struct file * file,
 		ret = -ENOIOCTLCMD;
 	}
 out:
-	unlock_kernel();
+	tty_unlock();
 	return ret;
 eperm:
 	ret = -EPERM;
@@ -1504,7 +1501,7 @@ long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
 
 	console = vc->vc_num;
 
-	lock_kernel();
+	tty_lock();
 
 	if (!vc_cons_allocated(console)) { 	/* impossible? */
 		ret = -ENOIOCTLCMD;
@@ -1572,11 +1569,11 @@ long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
 		goto fallback;
 	}
 out:
-	unlock_kernel();
+	tty_unlock();
 	return ret;
 
 fallback:
-	unlock_kernel();
+	tty_unlock();
 	return vt_ioctl(tty, file, cmd, arg);
 }
 

@@ -798,7 +798,6 @@ static void aio_queue_work(struct kioctx * ctx)
 	queue_delayed_work(aio_wq, &ctx->wq, timeout);
 }
 
-
 /*
  * aio_run_iocbs:
  * 	Process all pending retries queued on the ioctx
@@ -1285,7 +1284,7 @@ out:
 /* sys_io_destroy:
  *	Destroy the aio_context specified.  May cancel any outstanding 
  *	AIOs and block on completion.  Will fail with -ENOSYS if not
- *	implemented.  May fail with -EFAULT if the context pointed to
+ *	implemented.  May fail with -EINVAL if the context pointed to
  *	is invalid.
  */
 SYSCALL_DEFINE1(io_destroy, aio_context_t, ctx)
@@ -1634,6 +1633,23 @@ static int io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
 		goto out_put_req;
 
 	spin_lock_irq(&ctx->ctx_lock);
+	/*
+	 * We could have raced with io_destroy() and are currently holding a
+	 * reference to ctx which should be destroyed. We cannot submit IO
+	 * since ctx gets freed as soon as io_submit() puts its reference.  The
+	 * check here is reliable: io_destroy() sets ctx->dead before waiting
+	 * for outstanding IO and the barrier between these two is realized by
+	 * unlock of mm->ioctx_lock and lock of ctx->ctx_lock.  Analogously we
+	 * increment ctx->reqs_active before checking for ctx->dead and the
+	 * barrier is realized by unlock and lock of ctx->ctx_lock. Thus if we
+	 * don't see ctx->dead set here, io_destroy() waits for our IO to
+	 * finish.
+	 */
+	if (ctx->dead) {
+		spin_unlock_irq(&ctx->ctx_lock);
+		ret = -EINVAL;
+		goto out_put_req;
+	}
 	aio_run_iocb(req);
 	if (!list_empty(&ctx->run_list)) {
 		/* drain the run list */
@@ -1806,15 +1822,16 @@ SYSCALL_DEFINE3(io_cancel, aio_context_t, ctx_id, struct iocb __user *, iocb,
 
 /* io_getevents:
  *	Attempts to read at least min_nr events and up to nr events from
- *	the completion queue for the aio_context specified by ctx_id.  May
- *	fail with -EINVAL if ctx_id is invalid, if min_nr is out of range,
- *	if nr is out of range, if when is out of range.  May fail with
- *	-EFAULT if any of the memory specified to is invalid.  May return
- *	0 or < min_nr if no events are available and the timeout specified
- *	by when	has elapsed, where when == NULL specifies an infinite
- *	timeout.  Note that the timeout pointed to by when is relative and
- *	will be updated if not NULL and the operation blocks.  Will fail
- *	with -ENOSYS if not implemented.
+ *	the completion queue for the aio_context specified by ctx_id. If
+ *	it succeeds, the number of read events is returned. May fail with
+ *	-EINVAL if ctx_id is invalid, if min_nr is out of range, if nr is
+ *	out of range, if timeout is out of range.  May fail with -EFAULT
+ *	if any of the memory specified is invalid.  May return 0 or
+ *	< min_nr if the timeout specified by timeout has elapsed
+ *	before sufficient events are available, where timeout == NULL
+ *	specifies an infinite timeout. Note that the timeout pointed to by
+ *	timeout is relative and will be updated if not NULL and the
+ *	operation blocks. Will fail with -ENOSYS if not implemented.
  */
 SYSCALL_DEFINE5(io_getevents, aio_context_t, ctx_id,
 		long, min_nr,

@@ -1,6 +1,4 @@
 /*
- *  linux/drivers/char/core.c
- *
  *  Driver core for serial ports
  *
  *  Based on drivers/char/serial.c, by Linus Torvalds, Theodore Ts'o.
@@ -29,7 +27,6 @@
 #include <linux/console.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/smp_lock.h>
 #include <linux/device.h>
 #include <linux/serial.h> /* for serial_state and serial_icounter_struct */
 #include <linux/serial_core.h>
@@ -920,7 +917,6 @@ static int uart_tiocmget(struct tty_struct *tty, struct file *file)
 	if ((!file || !tty_hung_up_p(file)) &&
 	    !(tty->flags & (1 << TTY_IO_ERROR))) {
 		result = uport->mctrl;
-
 		spin_lock_irq(&uport->lock);
 		result |= uport->ops->get_mctrl(uport);
 		spin_unlock_irq(&uport->lock);
@@ -1252,17 +1248,6 @@ static void uart_set_termios(struct tty_struct *tty,
 		}
 		spin_unlock_irqrestore(&state->uart_port->lock, flags);
 	}
-#if 0
-	/*
-	 * No need to wake up processes in open wait, since they
-	 * sample the CLOCAL flag once, and don't recheck it.
-	 * XXX  It's not clear whether the current behavior is correct
-	 * or not.  Hence, this may change.....
-	 */
-	if (!(old_termios->c_cflag & CLOCAL) &&
-	    (tty->termios->c_cflag & CLOCAL))
-		wake_up_interruptible(&state->uart_port.open_wait);
-#endif
 }
 
 /*
@@ -1276,7 +1261,7 @@ static void uart_close(struct tty_struct *tty, struct file *filp)
 	struct tty_port *port;
 	struct uart_port *uport;
 
-	BUG_ON(!kernel_locked());
+	BUG_ON(!tty_locked());
 
 	if (!state)
 		return;
@@ -1372,8 +1357,6 @@ static void uart_wait_until_sent(struct tty_struct *tty, int timeout)
 	if (port->type == PORT_UNKNOWN || port->fifosize == 0)
 		return;
 
-	lock_kernel();
-
 	/*
 	 * Set the check interval to be 1/5 of the estimated time to
 	 * send a single character, and make it at least 1.  The check
@@ -1419,7 +1402,6 @@ static void uart_wait_until_sent(struct tty_struct *tty, int timeout)
 			break;
 	}
 	set_current_state(TASK_RUNNING); /* might not be needed */
-	unlock_kernel();
 }
 
 /*
@@ -1433,7 +1415,7 @@ static void uart_hangup(struct tty_struct *tty)
 	struct uart_state *state = tty->driver_data;
 	struct tty_port *port = &state->port;
 
-	BUG_ON(!kernel_locked());
+	BUG_ON(!tty_locked());
 	pr_debug("uart_hangup(%d)\n", state->uart_port->line);
 
 	mutex_lock(&port->mutex);
@@ -1614,7 +1596,7 @@ static int uart_open(struct tty_struct *tty, struct file *filp)
 	struct tty_port *port;
 	int retval, line = tty->index;
 
-	BUG_ON(!kernel_locked());
+	BUG_ON(!tty_locked());
 	pr_debug("uart_open(%d) called\n", line);
 
 	/*

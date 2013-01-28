@@ -20,7 +20,6 @@
 #include <linux/parser.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/vfs.h>
 
 #include "hfs_fs.h"
@@ -79,15 +78,11 @@ static int hfs_sync_fs(struct super_block *sb, int wait)
  */
 static void hfs_put_super(struct super_block *sb)
 {
-	lock_kernel();
-
 	if (sb->s_dirt)
 		hfs_write_super(sb);
 	hfs_mdb_close(sb);
 	/* release the MDB's resources */
 	hfs_mdb_put(sb);
-
-	unlock_kernel();
 }
 
 /*

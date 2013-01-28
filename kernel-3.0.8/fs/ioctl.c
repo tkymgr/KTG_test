@@ -6,7 +6,6 @@
 
 #include <linux/syscalls.h>
 #include <linux/mm.h>
-#include <linux/smp_lock.h>
 #include <linux/capability.h>
 #include <linux/file.h>
 #include <linux/fs.h>
@@ -29,7 +28,6 @@
  * @arg:	command-specific argument for ioctl
  *
  * Invokes filesystem specific ->unlocked_ioctl, if one exists; otherwise
- * invokes filesystem specific ->ioctl method.  If neither method exists,
  * returns -ENOTTY.
  *
  * Returns 0 on success, -errno on error.
@@ -48,10 +46,8 @@ static long vfs_ioctl(struct file *filp, unsigned int cmd,
 			error = -EINVAL;
 		goto out;
 	} else if (filp->f_op->ioctl) {
-		lock_kernel();
 		error = filp->f_op->ioctl(filp->f_path.dentry->d_inode,
 					  filp, cmd, arg);
-		unlock_kernel();
 	}
 
  out:

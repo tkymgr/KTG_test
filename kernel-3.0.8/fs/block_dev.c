@@ -11,7 +11,6 @@
 #include <linux/slab.h>
 #include <linux/kmod.h>
 #include <linux/major.h>
-#include <linux/smp_lock.h>
 #include <linux/device_cgroup.h>
 #include <linux/highmem.h>
 #include <linux/blkdev.h>
@@ -1347,13 +1346,12 @@ static int __blkdev_get(struct block_device *bdev, fmode_t mode, int for_part)
 		}
 	}
 
-	lock_kernel();
  restart:
 
 	ret = -ENXIO;
 	disk = get_gendisk(bdev->bd_dev, &partno);
 	if (!disk)
-		goto out_unlock_kernel;
+		goto out;
 
 	mutex_lock_nested(&bdev->bd_mutex, for_part);
 	if (!bdev->bd_openers) {
@@ -1433,7 +1431,7 @@ static int __blkdev_get(struct block_device *bdev, fmode_t mode, int for_part)
 	if (for_part)
 		bdev->bd_part_count++;
 	mutex_unlock(&bdev->bd_mutex);
-	unlock_kernel();
+
 	return 0;
 
  out_clear:
@@ -1446,8 +1444,7 @@ static int __blkdev_get(struct block_device *bdev, fmode_t mode, int for_part)
 	bdev->bd_contains = NULL;
  out_unlock_bdev:
 	mutex_unlock(&bdev->bd_mutex);
- out_unlock_kernel:
-	unlock_kernel();
+ out:
 
 	if (disk)
 		module_put(disk->fops->owner);
@@ -1517,7 +1514,6 @@ static int __blkdev_put(struct block_device *bdev, fmode_t mode, int for_part)
 	struct block_device *victim = NULL;
 
 	mutex_lock_nested(&bdev->bd_mutex, for_part);
-	lock_kernel();
 	if (for_part)
 		bdev->bd_part_count--;
 
@@ -1542,7 +1538,6 @@ static int __blkdev_put(struct block_device *bdev, fmode_t mode, int for_part)
 			victim = bdev->bd_contains;
 		bdev->bd_contains = NULL;
 	}
-	unlock_kernel();
 	mutex_unlock(&bdev->bd_mutex);
 	bdput(bdev);
 	if (victim)

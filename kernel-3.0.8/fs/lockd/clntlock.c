@@ -14,7 +14,6 @@
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/svc.h>
 #include <linux/lockd/lockd.h>
-#include <linux/smp_lock.h>
 #include <linux/kthread.h>
 
 #define NLMDBG_FACILITY		NLMDBG_CLIENT
@@ -216,10 +215,6 @@ reclaimer(void *ptr)
 	allow_signal(SIGKILL);
 
 	down_write(&host->h_rwsem);
-
-	/* This one ensures that our parent doesn't terminate while the
-	 * reclaim is in progress */
-	lock_kernel();
 	lockd_up();	/* note: this cannot fail as lockd is already running */
 
 	dprintk("lockd: reclaiming locks for host %s\n", host->h_name);
@@ -270,6 +265,5 @@ restart:
 	/* Release host handle after use */
 	nlm_release_host(host);
 	lockd_down();
-	unlock_kernel();
 	return 0;
 }
