@@ -109,7 +109,7 @@ static int sysfs_get_sb(struct file_system_type *fs_type,
 		goto out;
 
 	for (type = KOBJ_NS_TYPE_NONE; type < KOBJ_NS_TYPES; type++)
-		info->ns[type] = kobj_ns_current(type);
+		info->ns[type] = kobj_ns_grab_current(type);
 
 	sb = sget(fs_type, sysfs_test_super, sysfs_set_super, info);
 	if (IS_ERR(sb) || sb->s_fs_info != info)

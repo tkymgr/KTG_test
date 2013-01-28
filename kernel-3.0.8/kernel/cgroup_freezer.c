@@ -48,20 +48,19 @@ static inline struct freezer *task_freezer(struct task_struct *task)
 			    struct freezer, css);
 }
 
+static inline int __cgroup_freezing_or_frozen(struct task_struct *task)
+{
+	enum freezer_state state = task_freezer(task)->state;
+	return (state == CGROUP_FREEZING) || (state == CGROUP_FROZEN);
+}
+
 int cgroup_freezing_or_frozen(struct task_struct *task)
 {
-	struct freezer *freezer;
-	enum freezer_state state;
-
+	int result;
 	task_lock(task);
-	freezer = task_freezer(task);
-	if (!freezer->css.cgroup->parent)
-		state = CGROUP_THAWED; /* root cgroup can't be frozen */
-	else
-		state = freezer->state;
+	result = __cgroup_freezing_or_frozen(task);
 	task_unlock(task);
-
-	return (state == CGROUP_FREEZING) || (state == CGROUP_FROZEN);
+	return result;
 }
 
 /*
@@ -182,9 +181,6 @@ static int freezer_can_attach(struct cgroup_subsys *ss,
 
 	/*
 	 * Anything frozen can't move or be moved to/from.
-	 *
-	 * Since orig_freezer->state == FROZEN means that @task has been
-	 * frozen, so it's sufficient to check the latter condition.
 	 */
 
 	if (is_task_frozen_enough(task))

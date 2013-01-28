@@ -1,6 +1,4 @@
 /*
- * linux/drivers/char/keyboard.c
- *
  * Written for linux by Johan Myreen as a translation from
  * the assembly version by Linus (with diacriticals added)
  *
@@ -583,7 +581,7 @@ static void fn_scroll_back(struct vc_data *vc)
 
 static void fn_show_mem(struct vc_data *vc)
 {
-	show_mem();
+	show_mem(0);
 }
 
 static void fn_show_state(struct vc_data *vc)
