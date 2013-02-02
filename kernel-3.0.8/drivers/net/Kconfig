@@ -2068,25 +2068,25 @@ config IP1000
 	  will be called ipg.  This is recommended.
 
 config IGB
-       tristate "Intel(R) 82575/82576 PCI-Express Gigabit Ethernet support"
-       depends on PCI
-       ---help---
-         This driver supports Intel(R) 82575/82576 gigabit ethernet family of
-         adapters.  For more information on how to identify your adapter, go
-         to the Adapter & Driver ID Guide at:
+	tristate "Intel(R) 82575/82576 PCI-Express Gigabit Ethernet support"
+	depends on PCI
+	---help---
+	  This driver supports Intel(R) 82575/82576 gigabit ethernet family of
+	  adapters.  For more information on how to identify your adapter, go
+	  to the Adapter & Driver ID Guide at:
 
-         <http://support.intel.com/support/network/adapter/pro100/21397.htm>
+	  <http://support.intel.com/support/network/adapter/pro100/21397.htm>
 
-         For general information and support, go to the Intel support
-         website at:
+	  For general information and support, go to the Intel support
+	  website at:
 
-         <http://support.intel.com>
+	  <http://support.intel.com>
 
-         More specific information on configuring the driver is in
-         <file:Documentation/networking/e1000.txt>.
+	  More specific information on configuring the driver is in
+	  <file:Documentation/networking/e1000.txt>.
 
-         To compile this driver as a module, choose M here. The module
-         will be called igb.
+	  To compile this driver as a module, choose M here. The module
+	  will be called igb.
 
 config IGB_DCA
 	bool "Direct Cache Access (DCA) Support"
@@ -2098,25 +2098,25 @@ config IGB_DCA
 	  is used, with the intent of lessening the impact of cache misses.
 
 config IGBVF
-       tristate "Intel(R) 82576 Virtual Function Ethernet support"
-       depends on PCI
-       ---help---
-         This driver supports Intel(R) 82576 virtual functions.  For more
-         information on how to identify your adapter, go to the Adapter &
-         Driver ID Guide at:
+	tristate "Intel(R) 82576 Virtual Function Ethernet support"
+	depends on PCI
+	---help---
+	  This driver supports Intel(R) 82576 virtual functions.  For more
+	  information on how to identify your adapter, go to the Adapter &
+	  Driver ID Guide at:
 
-         <http://support.intel.com/support/network/adapter/pro100/21397.htm>
+	  <http://support.intel.com/support/network/adapter/pro100/21397.htm>
 
-         For general information and support, go to the Intel support
-         website at:
+	  For general information and support, go to the Intel support
+	  website at:
 
-         <http://support.intel.com>
+	  <http://support.intel.com>
 
-         More specific information on configuring the driver is in
-         <file:Documentation/networking/e1000.txt>.
+	  More specific information on configuring the driver is in
+	  <file:Documentation/networking/e1000.txt>.
 
-         To compile this driver as a module, choose M here. The module
-         will be called igbvf.
+	  To compile this driver as a module, choose M here. The module
+	  will be called igbvf.
 
 source "drivers/net/ixp2000/Kconfig"
 
@@ -2235,14 +2235,14 @@ config SKGE
 	  will be called skge.  This is recommended.
 
 config SKGE_DEBUG
-       bool "Debugging interface"
-       depends on SKGE && DEBUG_FS
-       help
-	 This option adds the ability to dump driver state for debugging.
-	 The file /sys/kernel/debug/skge/ethX displays the state of the internal
-	 transmit and receive rings.
+	bool "Debugging interface"
+	depends on SKGE && DEBUG_FS
+	help
+	  This option adds the ability to dump driver state for debugging.
+	  The file /sys/kernel/debug/skge/ethX displays the state of the internal
+	  transmit and receive rings.
 
-	 If unsure, say N.
+	  If unsure, say N.
 
 config SKY2
 	tristate "SysKonnect Yukon2 support"
@@ -2261,14 +2261,14 @@ config SKY2
 	  will be called sky2.  This is recommended.
 
 config SKY2_DEBUG
-       bool "Debugging interface"
-       depends on SKY2 && DEBUG_FS
-       help
-	 This option adds the ability to dump driver state for debugging.
-	 The file /sys/kernel/debug/sky2/ethX displays the state of the internal
-	 transmit and receive rings.
+	bool "Debugging interface"
+	depends on SKY2 && DEBUG_FS
+	help
+	  This option adds the ability to dump driver state for debugging.
+	  The file /sys/kernel/debug/sky2/ethX displays the state of the internal
+	  transmit and receive rings.
 
-	 If unsure, say N.
+	  If unsure, say N.
 
 config VIA_VELOCITY
 	tristate "VIA Velocity support"
@@ -2324,12 +2324,12 @@ config SPIDER_NET
 	  Cell Processor-Based Blades from IBM.
 
 config TSI108_ETH
-	   tristate "Tundra TSI108 gigabit Ethernet support"
-	   depends on TSI108_BRIDGE
-	   help
-	     This driver supports Tundra TSI108 gigabit Ethernet ports.
-	     To compile this driver as a module, choose M here: the module
-	     will be called tsi108_eth.
+	tristate "Tundra TSI108 gigabit Ethernet support"
+	depends on TSI108_BRIDGE
+	help
+	  This driver supports Tundra TSI108 gigabit Ethernet ports.
+	  To compile this driver as a module, choose M here: the module
+	  will be called tsi108_eth.
 
 config GELIC_NET
 	tristate "PS3 Gigabit Ethernet driver"
@@ -2507,32 +2507,32 @@ config MDIO
 	tristate
 
 config CHELSIO_T1
-        tristate "Chelsio 10Gb Ethernet support"
-        depends on PCI
+	tristate "Chelsio 10Gb Ethernet support"
+	depends on PCI
 	select CRC32
 	select MDIO
-        help
-          This driver supports Chelsio gigabit and 10-gigabit
-          Ethernet cards. More information about adapter features and
+	help
+	  This driver supports Chelsio gigabit and 10-gigabit
+	  Ethernet cards. More information about adapter features and
 	  performance tuning is in <file:Documentation/networking/cxgb.txt>.
 
-          For general information about Chelsio and our products, visit
-          our website at <http://www.chelsio.com>.
+	  For general information about Chelsio and our products, visit
+	  our website at <http://www.chelsio.com>.
 
-          For customer support, please visit our customer support page at
-          <http://www.chelsio.com/support.htm>.
+	  For customer support, please visit our customer support page at
+	  <http://www.chelsio.com/support.html>.
 
-          Please send feedback to <linux-bugs@chelsio.com>.
+	  Please send feedback to <linux-bugs@chelsio.com>.
 
-          To compile this driver as a module, choose M here: the module
-          will be called cxgb.
+	  To compile this driver as a module, choose M here: the module
+	  will be called cxgb.
 
 config CHELSIO_T1_1G
-        bool "Chelsio gigabit Ethernet support"
-        depends on CHELSIO_T1
-        help
-          Enables support for Chelsio's gigabit Ethernet PCI cards.  If you
-          are using only 10G cards say 'N' here.
+	bool "Chelsio gigabit Ethernet support"
+	depends on CHELSIO_T1
+	help
+	  Enables support for Chelsio's gigabit Ethernet PCI cards.  If you
+	  are using only 10G cards say 'N' here.
 
 config CHELSIO_T3_DEPENDS
 	tristate
@@ -2552,7 +2552,7 @@ config CHELSIO_T3
 	  our website at <http://www.chelsio.com>.
 
 	  For customer support, please visit our customer support page at
-	  <http://www.chelsio.com/support.htm>.
+	  <http://www.chelsio.com/support.html>.
 
 	  Please send feedback to <linux-bugs@chelsio.com>.
 
@@ -2570,11 +2570,11 @@ config EHEA
 	  will be called ehea.
 
 config ENIC
-	tristate "Cisco 10G Ethernet NIC support"
+	tristate "Cisco VIC Ethernet NIC Support"
 	depends on PCI && INET
 	select INET_LRO
 	help
-	  This enables the support for the Cisco 10G Ethernet card.
+	  This enables the support for the Cisco VIC Ethernet card.
 
 config IXGBE
 	tristate "Intel(R) 10GbE PCI Express adapters support"
@@ -2637,21 +2637,29 @@ config IXGB
 	  will be called ixgb.
 
 config S2IO
-	tristate "S2IO 10Gbe XFrame NIC"
+	tristate "Exar Xframe 10Gb Ethernet Adapter"
 	depends on PCI
 	---help---
-	  This driver supports the 10Gbe XFrame NIC of S2IO. 
+	  This driver supports Exar Corp's Xframe Series 10Gb Ethernet Adapters.
+
 	  More specific information on configuring the driver is in 
 	  <file:Documentation/networking/s2io.txt>.
 
+	  To compile this driver as a module, choose M here. The module
+	  will be called s2io.
+
 config VXGE
-	tristate "Neterion X3100 Series 10GbE PCIe Server Adapter"
+	tristate "Exar X3100 Series 10GbE PCIe Server Adapter"
 	depends on PCI && INET
 	---help---
-	  This driver supports Neterion Inc's X3100 Series 10 GbE PCIe
+	  This driver supports Exar Corp's X3100 Series 10 GbE PCIe
 	  I/O Virtualized Server Adapter.
+
 	  More specific information on configuring the driver is in
 	  <file:Documentation/networking/vxge.txt>.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called vxge.
 
 config VXGE_DEBUG_TRACE_ALL
 	bool "Enabling All Debug trace statments in driver"
@@ -2659,7 +2667,8 @@ config VXGE_DEBUG_TRACE_ALL
 	depends on VXGE
 	---help---
 	  Say Y here if you want to enabling all the debug trace statements in
-	  driver. By  default only few debug trace statements are enabled.
+	  the vxge driver. By default only few debug trace statements are
+	  enabled.
 
 config MYRI10GE
 	tristate "Myricom Myri-10G Ethernet support"
@@ -2724,7 +2733,7 @@ config MLX4_CORE
 	default n
 
 config MLX4_DEBUG
-	bool "Verbose debugging output" if (MLX4_CORE && EMBEDDED)
+	bool "Verbose debugging output" if (MLX4_CORE && EXPERT)
 	depends on MLX4_CORE
 	default y
 	---help---

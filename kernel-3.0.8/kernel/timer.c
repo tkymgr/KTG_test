@@ -321,6 +321,7 @@ EXPORT_SYMBOL_GPL(round_jiffies_up_relative);
 
 /**
  * set_timer_slack - set the allowed slack for a timer
+ * @timer: the timer to be modified
  * @slack_hz: the amount of time (in jiffies) allowed for rounding
  *
  * Set the amount of time, in jiffies, that a certain timer has
@@ -336,15 +337,6 @@ void set_timer_slack(struct timer_list *timer, int slack_hz)
 	timer->slack = slack_hz;
 }
 EXPORT_SYMBOL_GPL(set_timer_slack);
-
-
-static inline void set_running_timer(struct tvec_base *base,
-					struct timer_list *timer)
-{
-#ifdef CONFIG_SMP
-	base->running_timer = timer;
-#endif
-}
 
 static void internal_add_timer(struct tvec_base *base, struct timer_list *timer)
 {
@@ -420,6 +412,11 @@ static void timer_stats_account_timer(struct timer_list *timer) {}
 
 static struct debug_obj_descr timer_debug_descr;
 
+static void *timer_debug_hint(void *addr)
+{
+	return ((struct timer_list *) addr)->function;
+}
+
 /*
  * fixup_init is called when:
  * - an active object is initialized
@@ -493,6 +490,7 @@ static int timer_fixup_free(void *addr, enum debug_obj_state state)
 
 static struct debug_obj_descr timer_debug_descr = {
 	.name		= "timer_list",
+	.debug_hint	= timer_debug_hint,
 	.fixup_init	= timer_fixup_init,
 	.fixup_activate	= timer_fixup_activate,
 	.fixup_free	= timer_fixup_free,
@@ -576,6 +574,19 @@ static void __init_timer(struct timer_list *timer,
 #endif
 	lockdep_init_map(&timer->lockdep_map, name, key, 0);
 }
+
+void setup_deferrable_timer_on_stack_key(struct timer_list *timer,
+					 const char *name,
+					 struct lock_class_key *key,
+					 void (*function)(unsigned long),
+					 unsigned long data)
+{
+	timer->function = function;
+	timer->data = data;
+	init_timer_on_stack_key(timer, name, key);
+	timer_set_deferrable(timer);
+}
+EXPORT_SYMBOL_GPL(setup_deferrable_timer_on_stack_key);
 
 /**
  * init_timer_key - initialize a timer
@@ -750,16 +761,15 @@ unsigned long apply_slack(struct timer_list *timer, unsigned long expires)
 	unsigned long expires_limit, mask;
 	int bit;
 
-	expires_limit = expires;
-
 	if (timer->slack >= 0) {
 		expires_limit = expires + timer->slack;
 	} else {
-		unsigned long now = jiffies;
+		long delta = expires - jiffies;
 
-		/* No slack, if already expired else auto slack 0.4% */
-		if (time_after(expires, now))
-			expires_limit = expires + (expires - now)/256;
+		if (delta < 256)
+			return expires;
+
+		expires_limit = expires + delta / 256;
 	}
 	mask = expires ^ expires_limit;
 	if (mask == 0)
@@ -796,6 +806,8 @@ unsigned long apply_slack(struct timer_list *timer, unsigned long expires)
  */
 int mod_timer(struct timer_list *timer, unsigned long expires)
 {
+	expires = apply_slack(timer, expires);
+
 	/*
 	 * This is a common optimization triggered by the
 	 * networking code - if the timer is re-modified
@@ -803,8 +815,6 @@ int mod_timer(struct timer_list *timer, unsigned long expires)
 	 */
 	if (timer_pending(timer) && timer->expires == expires)
 		return 1;
-
-	expires = apply_slack(timer, expires);
 
 	return __mod_timer(timer, expires, false, TIMER_NOT_PINNED);
 }
@@ -928,8 +938,6 @@ EXPORT_SYMBOL(del_timer);
  *
  * This function tries to deactivate a timer. Upon successful (ret >= 0)
  * exit the timer is not queued and the handler is not running on any CPU.
- *
- * It must not be called from interrupt contexts.
  */
 int try_to_del_timer_sync(struct timer_list *timer)
 {
@@ -973,6 +981,25 @@ EXPORT_SYMBOL(try_to_del_timer_sync);
  * add_timer_on(). Upon exit the timer is not queued and the handler is
  * not running on any CPU.
  *
+ * Note: You must not hold locks that are held in interrupt context
+ *   while calling this function. Even if the lock has nothing to do
+ *   with the timer in question.  Here's why:
+ *
+ *    CPU0                             CPU1
+ *    ----                             ----
+ *                                   <SOFTIRQ>
+ *                                   call_timer_fn();
+ *                                     base->running_timer = mytimer;
+ *  spin_lock_irq(somelock);
+ *                                     <IRQ>
+ *                                        spin_lock(somelock);
+ *  del_timer_sync(mytimer);
+ *   while (base->running_timer == mytimer);
+ *
+ * Now del_timer_sync() will never return and never release somelock.
+ * The interrupt on the other CPU is waiting to grab somelock but
+ * it has interrupted the softirq that CPU0 is waiting to finish.
+ *
  * The function returns whether it has deactivated a pending timer or not.
  */
 int del_timer_sync(struct timer_list *timer)
@@ -980,12 +1007,20 @@ int del_timer_sync(struct timer_list *timer)
 #ifdef CONFIG_LOCKDEP
 	unsigned long flags;
 
+	/*
+	 * If lockdep gives a backtrace here, please reference
+	 * the synchronization rules above.
+	 */
 	local_irq_save(flags);
 	lock_map_acquire(&timer->lockdep_map);
 	lock_map_release(&timer->lockdep_map);
 	local_irq_restore(flags);
 #endif
-
+	/*
+	 * don't use it in hardirq context, because it
+	 * could lead to deadlock.
+	 */
+	WARN_ON(in_irq());
 	for (;;) {
 		int ret = try_to_del_timer_sync(timer);
 		if (ret >= 0)
@@ -1096,7 +1131,7 @@ static inline void __run_timers(struct tvec_base *base)
 
 			timer_stats_account_timer(timer);
 
-			set_running_timer(base, timer);
+			base->running_timer = timer;
 			detach_timer(timer, 1);
 
 			spin_unlock_irq(&base->lock);
@@ -1104,7 +1139,7 @@ static inline void __run_timers(struct tvec_base *base)
 			spin_lock_irq(&base->lock);
 		}
 	}
-	set_running_timer(base, NULL);
+	base->running_timer = NULL;
 	spin_unlock_irq(&base->lock);
 }
 
@@ -1234,7 +1269,7 @@ static unsigned long cmp_next_hrtimer_event(unsigned long now,
  */
 unsigned long get_next_timer_interrupt(unsigned long now)
 {
-	struct tvec_base *base = __get_cpu_var(tvec_bases);
+	struct tvec_base *base = __this_cpu_read(tvec_bases);
 	unsigned long expires;
 
 	/*
@@ -1280,7 +1315,7 @@ void update_process_times(int user_tick)
  */
 static void run_timer_softirq(struct softirq_action *h)
 {
-	struct tvec_base *base = __get_cpu_var(tvec_bases);
+	struct tvec_base *base = __this_cpu_read(tvec_bases);
 
 	hrtimer_run_pending();
 

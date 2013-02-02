@@ -28,3 +28,5 @@ phys_addr_t per_cpu_ptr_to_phys(void *addr)
 {
 	return __pa(addr);
 }
+
+void __init setup_per_cpu_areas(void) { }

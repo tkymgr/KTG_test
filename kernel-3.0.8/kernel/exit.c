@@ -50,6 +50,7 @@
 #include <linux/perf_event.h>
 #include <trace/events/sched.h>
 #include <linux/hw_breakpoint.h>
+#include <linux/oom.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -68,7 +69,7 @@ static void __unhash_process(struct task_struct *p, bool group_dead)
 
 		list_del_rcu(&p->tasks);
 		list_del_init(&p->sibling);
-		__get_cpu_var(process_counts)--;
+		__this_cpu_dec(process_counts);
 	}
 	list_del_rcu(&p->thread_group);
 }
@@ -779,9 +780,12 @@ static void forget_original_parent(struct task_struct *father)
 	struct task_struct *p, *n, *reaper;
 	LIST_HEAD(dead_children);
 
-	exit_ptrace(father);
-
 	write_lock_irq(&tasklist_lock);
+	/*
+	 * Note that exit_ptrace() and find_new_reaper() might
+	 * drop tasklist_lock and reacquire it.
+	 */
+	exit_ptrace(father);
 	reaper = find_new_reaper(father);
 
 	list_for_each_entry_safe(p, n, &father->children, sibling) {
@@ -835,7 +839,7 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	/* Let father know we died
 	 *
 	 * Thread signals are configurable, but you aren't going to use
-	 * that to send signals to arbitary processes.
+	 * that to send signals to arbitrary processes.
 	 * That stops right now.
 	 *
 	 * If the parent exec id doesn't match the exec id we saved
@@ -1366,11 +1370,23 @@ static int *task_stopped_code(struct task_struct *p, bool ptrace)
 	return NULL;
 }
 
-/*
- * Handle sys_wait4 work for one task in state TASK_STOPPED.  We hold
- * read_lock(&tasklist_lock) on entry.  If we return zero, we still hold
- * the lock and this task is uninteresting.  If we return nonzero, we have
- * released the lock and the system call should return.
+/**
+ * wait_task_stopped - Wait for %TASK_STOPPED or %TASK_TRACED
+ * @wo: wait options
+ * @ptrace: is the wait for ptrace
+ * @p: task to wait for
+ *
+ * Handle sys_wait4() work for %p in state %TASK_STOPPED or %TASK_TRACED.
+ *
+ * CONTEXT:
+ * read_lock(&tasklist_lock), which is released if return value is
+ * non-zero.  Also, grabs and releases @p->sighand->siglock.
+ *
+ * RETURNS:
+ * 0 if wait condition didn't exist and search for other wait conditions
+ * should continue.  Non-zero return, -errno on failure and @p's pid on
+ * success, implies that tasklist_lock is released and wait condition
+ * search should terminate.
  */
 static int wait_task_stopped(struct wait_opts *wo,
 				int ptrace, struct task_struct *p)
