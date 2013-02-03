@@ -2127,65 +2127,17 @@ static inline int deliver_skb(struct sk_buff *skb,
 	return pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
 }
 
-#if defined(CONFIG_BRIDGE) || defined (CONFIG_BRIDGE_MODULE)
-
-#if defined(CONFIG_ATM_LANE) || defined(CONFIG_ATM_LANE_MODULE)
+#if (defined(CONFIG_BRIDGE) || defined(CONFIG_BRIDGE_MODULE)) && \
+    (defined(CONFIG_ATM_LANE) || defined(CONFIG_ATM_LANE_MODULE))
 /* This hook is defined here for ATM LANE */
 int (*br_fdb_test_addr_hook)(struct net_device *dev,
 			     unsigned char *addr) __read_mostly;
 EXPORT_SYMBOL_GPL(br_fdb_test_addr_hook);
 #endif
 
-/*
- * If bridge module is loaded call bridging hook.
- *  returns NULL if packet was consumed.
- */
-struct sk_buff *(*br_handle_frame_hook)(struct net_bridge_port *p,
-					struct sk_buff *skb) __read_mostly;
-EXPORT_SYMBOL_GPL(br_handle_frame_hook);
-
-static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
-					    struct packet_type **pt_prev, int *ret,
-					    struct net_device *orig_dev)
-{
-	struct net_bridge_port *port;
-
-	if (skb->pkt_type == PACKET_LOOPBACK ||
-	    (port = rcu_dereference(skb->dev->br_port)) == NULL)
-		return skb;
-
-	if (*pt_prev) {
-		*ret = deliver_skb(skb, *pt_prev, orig_dev);
-		*pt_prev = NULL;
-	}
-
-	return br_handle_frame_hook(port, skb);
-}
-#else
 #define handle_bridge(skb, pt_prev, ret, orig_dev)	(skb)
-#endif
-
-#if defined(CONFIG_MACVLAN) || defined(CONFIG_MACVLAN_MODULE)
-struct sk_buff *(*macvlan_handle_frame_hook)(struct sk_buff *skb) __read_mostly;
-EXPORT_SYMBOL_GPL(macvlan_handle_frame_hook);
-
-static inline struct sk_buff *handle_macvlan(struct sk_buff *skb,
-					     struct packet_type **pt_prev,
-					     int *ret,
-					     struct net_device *orig_dev)
-{
-	if (skb->dev->macvlan_port == NULL)
-		return skb;
-
-	if (*pt_prev) {
-		*ret = deliver_skb(skb, *pt_prev, orig_dev);
-		*pt_prev = NULL;
-	}
-	return macvlan_handle_frame_hook(skb);
-}
-#else
 #define handle_macvlan(skb, pt_prev, ret, orig_dev)	(skb)
-#endif
+
 
 #ifdef CONFIG_NET_CLS_ACT
 /* TODO: Maybe we should just force sch_ingress to be compiled in

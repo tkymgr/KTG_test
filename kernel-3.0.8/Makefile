@@ -376,7 +376,7 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL := -Wno-array-bounds -Wno-uninitialized -Wno-unused-value \
 		   -Wno-address -Wno-parentheses -Wno-enum-compare \
-		   -Wno-switch -Wno-unused-but-set-variable
+		   -Wno-switch -Wno-unused-but-set-variable -Wno-deprecated-declarations
 
 KBUILD_AFLAGS   := -D__ASSEMBLY__
 KBUILD_AFLAGS_MODULE  := -DMODULE
