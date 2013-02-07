@@ -1752,7 +1752,7 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 /*
  * vma is the first one with address < vma->vm_start.  Have to extend vma.
  */
-static int expand_downwards(struct vm_area_struct *vma,
+int expand_downwards(struct vm_area_struct *vma,
 				   unsigned long address)
 {
 	int error;
@@ -1792,11 +1792,6 @@ static int expand_downwards(struct vm_area_struct *vma,
 	}
 	anon_vma_unlock(vma);
 	return error;
-}
-
-int expand_stack_downwards(struct vm_area_struct *vma, unsigned long address)
-{
-	return expand_downwards(vma, address);
 }
 
 #ifdef CONFIG_STACK_GROWSUP
