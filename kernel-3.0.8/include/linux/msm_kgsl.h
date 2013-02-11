@@ -25,6 +25,14 @@
 #define KGSL_FLAGS_RESERVED2   0x00000080
 #define KGSL_FLAGS_SOFT_RESET  0x00000100
 
+/* Clock flags to show which clocks should be controled by a given platform */
+#define KGSL_CLK_SRC	0x00000001
+#define KGSL_CLK_CORE	0x00000002
+#define KGSL_CLK_IFACE	0x00000004
+#define KGSL_CLK_MEM	0x00000008
+#define KGSL_CLK_MEM_IFACE 0x00000010
+#define KGSL_CLK_AXI	0x00000020
+
 #define KGSL_MAX_PWRLEVELS 5
 
 #define KGSL_CONVERT_TO_MBPS(val) \
@@ -41,7 +49,8 @@ enum kgsl_deviceid {
 enum kgsl_user_mem_type {
 	KGSL_USER_MEM_TYPE_PMEM		= 0x00000000,
 	KGSL_USER_MEM_TYPE_ASHMEM	= 0x00000001,
-	KGSL_USER_MEM_TYPE_ADDR		= 0x00000002
+	KGSL_USER_MEM_TYPE_ADDR		= 0x00000002,
+	KGSL_USER_MEM_TYPE_ION		= 0x00000003,
 };
 
 struct kgsl_devinfo {

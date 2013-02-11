@@ -63,6 +63,7 @@
 #include <linux/namei.h>
 #include <linux/mnt_namespace.h>
 #include <linux/mm.h>
+#include <linux/swap.h>
 #include <linux/rcupdate.h>
 #include <linux/kallsyms.h>
 #include <linux/stacktrace.h>
@@ -82,6 +83,9 @@
 #include <linux/pid_namespace.h>
 #include <linux/fs_struct.h>
 #include <linux/slab.h>
+#ifdef CONFIG_HARDWALL
+#include <asm/hardwall.h>
+#endif
 #include "internal.h"
 
 /* NOTE:
@@ -434,8 +438,6 @@ static const struct file_operations proc_lstats_operations = {
 
 #endif
 
-/* The badness from the OOM killer */
-unsigned long badness(struct task_struct *p, unsigned long uptime);
 static int proc_oom_score(struct task_struct *task, char *buffer)
 {
 	unsigned long points = 0;
@@ -444,7 +446,8 @@ static int proc_oom_score(struct task_struct *task, char *buffer)
 	do_posix_clock_monotonic_gettime(&uptime);
 	read_lock(&tasklist_lock);
 	if (pid_alive(task))
-		points = badness(task, uptime.tv_sec);
+		points = oom_badness(task, NULL, NULL,
+					totalram_pages + total_swap_pages);
 	read_unlock(&tasklist_lock);
 	return sprintf(buffer, "%lu\n", points);
 }
