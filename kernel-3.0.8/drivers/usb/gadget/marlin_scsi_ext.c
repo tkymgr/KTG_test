@@ -479,8 +479,7 @@ static enum mldd_proc_res_t mldd_raise_event(enum mltl_dd_cmd_type_t cmd_type)
 /**
  * Character Device Handler
  */
-static int mldd_ioctl(struct inode *nd, struct file *fp,
-		unsigned int cmd, unsigned long arg)
+static long mldd_ioctl(struct file *fp, unsigned cmd, unsigned long arg)
 {
 	int ret = 0;
 	enum mldd_state_t new_state = MLDD_STATE_NONE;
@@ -728,7 +727,7 @@ static unsigned int mldd_poll(struct file *file, poll_table *wait)
 /* file operations needed when we register this driver */
 static const struct file_operations marlin_fops = {
 	.owner =	 THIS_MODULE,
-	.ioctl =	 mldd_ioctl,
+	.unlocked_ioctl =	 mldd_ioctl,
 	.read =		 mldd_read,
 	.write =	 mldd_write,
 	.poll =		 mldd_poll,

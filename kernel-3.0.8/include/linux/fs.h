@@ -8,6 +8,7 @@
 
 #include <linux/limits.h>
 #include <linux/ioctl.h>
+#include <linux/blk_types.h>
 #include <linux/types.h>
 
 /*
@@ -400,6 +401,7 @@ struct inodes_stat_t {
 #include <linux/capability.h>
 #include <linux/semaphore.h>
 #include <linux/fiemap.h>
+#include <linux/rculist_bl.h>
 
 #include <asm/atomic.h>
 #include <asm/byteorder.h>
@@ -614,6 +616,7 @@ struct address_space_operations {
 	sector_t (*bmap)(struct address_space *, sector_t);
 	void (*invalidatepage) (struct page *, unsigned long);
 	int (*releasepage) (struct page *, gfp_t);
+	void (*freepage)(struct page *);
 	ssize_t (*direct_IO)(int, struct kiocb *, const struct iovec *iov,
 			loff_t offset, unsigned long nr_segs);
 	int (*get_xip_mem)(struct address_space *, pgoff_t, int,
@@ -626,6 +629,8 @@ struct address_space_operations {
 					unsigned long);
 	int (*error_remove_page)(struct address_space *, struct page *);
 };
+
+extern const struct address_space_operations empty_aops;
 
 /*
  * pagecache_write_begin/pagecache_write_end must be used by general code
@@ -647,7 +652,7 @@ struct address_space {
 	unsigned int		i_mmap_writable;/* count VM_SHARED mappings */
 	struct prio_tree_root	i_mmap;		/* tree of private and shared mappings */
 	struct list_head	i_mmap_nonlinear;/*list VM_NONLINEAR mappings */
-	spinlock_t		i_mmap_lock;	/* protect tree, count, list */
+	struct mutex		i_mmap_mutex;	/* protect tree, count, list */
 	unsigned int		truncate_count;	/* Cover race condition with truncate */
 	unsigned long		nrpages;	/* number of total pages */
 	pgoff_t			writeback_index;/* writeback starts here */
@@ -820,6 +825,11 @@ struct inode {
 	void			*i_private; /* fs or device private pointer */
 };
 
+static inline int inode_unhashed(struct inode *inode)
+{
+	return hlist_unhashed(&inode->i_hash);
+}
+
 /*
  * inode->i_mutex nesting subclasses for the lock validator:
  *
@@ -980,6 +990,14 @@ struct file {
 	unsigned long f_mnt_write_state;
 #endif
 };
+
+struct file_handle {
+	__u32 handle_bytes;
+	int handle_type;
+	/* file identifier */
+	unsigned char f_handle[0];
+};
+
 extern spinlock_t files_lock;
 #define file_list_lock() spin_lock(&files_lock);
 #define file_list_unlock() spin_unlock(&files_lock);
@@ -1550,7 +1568,6 @@ struct file_operations {
 	ssize_t (*aio_write) (struct kiocb *, const struct iovec *, unsigned long, loff_t);
 	int (*readdir) (struct file *, void *, filldir_t);
 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
-	int (*ioctl) (struct inode *, struct file *, unsigned int, unsigned long);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
 	long (*compat_ioctl) (struct file *, unsigned int, unsigned long);
 	int (*mmap) (struct file *, struct vm_area_struct *);
@@ -1568,7 +1585,11 @@ struct file_operations {
 	ssize_t (*splice_write)(struct pipe_inode_info *, struct file *, loff_t *, size_t, unsigned int);
 	ssize_t (*splice_read)(struct file *, loff_t *, struct pipe_inode_info *, size_t, unsigned int);
 	int (*setlease)(struct file *, long, struct file_lock **);
+	long (*fallocate)(struct file *file, int mode, loff_t offset,
+			  loff_t len);
 };
+
+#define IPERM_FLAG_RCU	0x0001
 
 struct inode_operations {
 	struct dentry * (*lookup) (struct inode *,struct dentry *, struct nameidata *);
@@ -1622,7 +1643,7 @@ struct super_operations {
 
    	void (*dirty_inode) (struct inode *);
 	int (*write_inode) (struct inode *, struct writeback_control *wbc);
-	void (*drop_inode) (struct inode *);
+	int (*drop_inode) (struct inode *);
 	void (*delete_inode) (struct inode *);
 	void (*put_super) (struct super_block *);
 	void (*write_super) (struct super_block *);
@@ -1793,6 +1814,7 @@ static inline void file_accessed(struct file *file)
 }
 
 int sync_inode(struct inode *inode, struct writeback_control *wbc);
+int sync_inode_metadata(struct inode *inode, int wait);
 
 struct file_system_type {
 	const char *name;
@@ -1868,6 +1890,7 @@ extern int register_filesystem(struct file_system_type *);
 extern int unregister_filesystem(struct file_system_type *);
 extern struct vfsmount *kern_mount_data(struct file_system_type *, void *data);
 #define kern_mount(type) kern_mount_data(type, NULL)
+extern void kern_unmount(struct vfsmount *mnt);
 extern int may_umount_tree(struct vfsmount *);
 extern int may_umount(struct vfsmount *);
 extern long do_mount(char *, char *, char *, unsigned long, void *);
@@ -1884,6 +1907,7 @@ extern int current_umask(void);
 /* /sys/fs */
 extern struct kobject *fs_kobj;
 
+#define MAX_RW_COUNT (INT_MAX & PAGE_CACHE_MASK)
 extern int rw_verify_area(int, struct file *, loff_t *, size_t);
 
 #define FLOCK_VERIFY_READ  1
@@ -2133,7 +2157,7 @@ extern void check_disk_size_change(struct gendisk *disk,
 				   struct block_device *bdev);
 extern int revalidate_disk(struct gendisk *);
 extern int check_disk_change(struct block_device *);
-extern int __invalidate_device(struct block_device *);
+extern int __invalidate_device(struct block_device *, bool);
 extern int invalidate_partition(struct gendisk *, int);
 #endif
 extern int invalidate_inodes(struct super_block *);
@@ -2194,6 +2218,26 @@ static inline void allow_write_access(struct file *file)
 	if (file)
 		atomic_inc(&file->f_path.dentry->d_inode->i_writecount);
 }
+#ifdef CONFIG_IMA
+static inline void i_readcount_dec(struct inode *inode)
+{
+	BUG_ON(!atomic_read(&inode->i_readcount));
+	atomic_dec(&inode->i_readcount);
+}
+static inline void i_readcount_inc(struct inode *inode)
+{
+	atomic_inc(&inode->i_readcount);
+}
+#else
+static inline void i_readcount_dec(struct inode *inode)
+{
+	return;
+}
+static inline void i_readcount_inc(struct inode *inode)
+{
+	return;
+}
+#endif
 extern int do_pipe_flags(int *, int);
 extern struct file *create_read_pipe(struct file *f, int flags);
 extern struct file *create_write_pipe(int flags);
@@ -2225,8 +2269,8 @@ extern void iput(struct inode *);
 extern struct inode * igrab(struct inode *);
 extern ino_t iunique(struct super_block *, ino_t);
 extern int inode_needs_sync(struct inode *inode);
-extern void generic_delete_inode(struct inode *inode);
-extern void generic_drop_inode(struct inode *inode);
+extern int generic_delete_inode(struct inode *inode);
+extern int generic_drop_inode(struct inode *inode);
 extern int generic_detach_inode(struct inode *inode);
 
 extern struct inode *ilookup5_nowait(struct super_block *sb,
@@ -2241,6 +2285,7 @@ extern struct inode * iget_locked(struct super_block *, unsigned long);
 extern int insert_inode_locked4(struct inode *, unsigned long, int (*test)(struct inode *, void *), void *);
 extern int insert_inode_locked(struct inode *);
 extern void unlock_new_inode(struct inode *);
+extern unsigned int get_next_ino(void);
 
 extern void __iget(struct inode * inode);
 extern void iget_failed(struct inode *);
@@ -2253,14 +2298,15 @@ extern int file_remove_suid(struct file *);
 
 extern void __insert_inode_hash(struct inode *, unsigned long hashval);
 extern void remove_inode_hash(struct inode *);
-static inline void insert_inode_hash(struct inode *inode) {
+static inline void insert_inode_hash(struct inode *inode)
+{
 	__insert_inode_hash(inode, inode->i_ino);
 }
+extern void inode_sb_list_add(struct inode *inode);
 
 extern void file_move(struct file *f, struct list_head *list);
 extern void file_kill(struct file *f);
 #ifdef CONFIG_BLOCK
-struct bio;
 extern void submit_bio(int, struct bio *);
 extern int bdev_read_only(struct block_device *);
 #endif
@@ -2327,7 +2373,6 @@ static inline int xip_truncate_page(struct address_space *mapping, loff_t from)
 #endif
 
 #ifdef CONFIG_BLOCK
-struct bio;
 typedef void (dio_submit_t)(int rw, struct bio *bio, struct inode *inode,
 			    loff_t file_offset);
 void dio_end_io(struct bio *bio, int error);
@@ -2474,6 +2519,8 @@ extern ssize_t simple_write_to_buffer(void *to, size_t available, loff_t *ppos,
 
 extern int generic_file_fsync(struct file *, int);
 
+extern int generic_check_addressable(unsigned, u64);
+
 #ifdef CONFIG_MIGRATION
 extern int buffer_migrate_page(struct address_space *,
 				struct page *, struct page *);
@@ -2496,6 +2543,10 @@ static inline ino_t parent_ino(struct dentry *dentry)
 {
 	ino_t res;
 
+	/*
+	 * Don't strictly need d_lock here? If the parent ino could change
+	 * then surely we'd have a deeper race in the caller?
+	 */
 	spin_lock(&dentry->d_lock);
 	res = dentry->d_parent->d_inode->i_ino;
 	spin_unlock(&dentry->d_lock);
@@ -2551,6 +2602,7 @@ static const struct file_operations __fops = {				\
 	.release = simple_attr_release,					\
 	.read	 = simple_attr_read,					\
 	.write	 = simple_attr_write,					\
+	.llseek	 = generic_file_llseek,					\
 };
 
 static inline void __attribute__((format(printf, 1, 2)))
@@ -2571,11 +2623,29 @@ ssize_t simple_attr_write(struct file *file, const char __user *buf,
 struct ctl_table;
 int proc_nr_files(struct ctl_table *table, int write,
 		  void __user *buffer, size_t *lenp, loff_t *ppos);
-
+int proc_nr_dentry(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos);
+int proc_nr_inodes(struct ctl_table *table, int write,
+		   void __user *buffer, size_t *lenp, loff_t *ppos);
 int __init get_filesystem_list(char *buf);
 
+#define __FMODE_EXEC		((__force int) FMODE_EXEC)
+#define __FMODE_NONOTIFY	((__force int) FMODE_NONOTIFY)
+
 #define ACC_MODE(x) ("\004\002\006\006"[(x)&O_ACCMODE])
-#define OPEN_FMODE(flag) ((__force fmode_t)((flag + 1) & O_ACCMODE))
+#define OPEN_FMODE(flag) ((__force fmode_t)(((flag + 1) & O_ACCMODE) | \
+					    (flag & __FMODE_NONOTIFY)))
+
+static inline int is_sxid(mode_t mode)
+{
+	return (mode & S_ISUID) || ((mode & S_ISGID) && (mode & S_IXGRP));
+}
+
+static inline void inode_has_no_xattr(struct inode *inode)
+{
+	if (!is_sxid(inode->i_mode) && (inode->i_sb->s_flags & MS_NOSEC))
+		inode->i_flags |= S_NOSEC;
+}
 
 #endif /* __KERNEL__ */
 #endif /* _LINUX_FS_H */

@@ -241,7 +241,7 @@ static struct blk_major_name {
 } *major_names[BLKDEV_MAJOR_HASH_SIZE];
 
 /* index in the above - for now: assume no multimajor ranges */
-static inline int major_to_index(int major)
+static inline int major_to_index(unsigned major)
 {
 	return major % BLKDEV_MAJOR_HASH_SIZE;
 }
@@ -541,7 +541,7 @@ void add_disk(struct gendisk *disk)
 	disk->major = MAJOR(devt);
 	disk->first_minor = MINOR(devt);
 
-	/* Register BDI before referencing it from bdev */
+	/* Register BDI before referencing it from bdev */ 
 	bdi = &disk->queue->backing_dev_info;
 	bdi_register_dev(bdi, disk_devt(disk));
 
@@ -554,7 +554,6 @@ void add_disk(struct gendisk *disk)
 				   "bdi");
 	WARN_ON(retval);
 }
-
 EXPORT_SYMBOL(add_disk);
 EXPORT_SYMBOL(del_gendisk);	/* in partitions/check.c */
 
@@ -647,7 +646,7 @@ void __init printk_all_partitions(void)
 
 		/*
 		 * Don't show empty devices or things that have been
-		 * surpressed
+		 * suppressed
 		 */
 		if (get_capacity(disk) == 0 ||
 		    (disk->flags & GENHD_FL_SUPPRESS_PARTITION_INFO))
@@ -1298,7 +1297,7 @@ int invalidate_partition(struct gendisk *disk, int partno)
 	struct block_device *bdev = bdget_disk(disk, partno);
 	if (bdev) {
 		fsync_bdev(bdev);
-		res = __invalidate_device(bdev);
+		res = __invalidate_device(bdev, true);
 		bdput(bdev);
 	}
 	return res;

@@ -258,7 +258,7 @@ void inode_init_once(struct inode *inode)
 	INIT_LIST_HEAD(&inode->i_devices);
 	INIT_RADIX_TREE(&inode->i_data.page_tree, GFP_ATOMIC);
 	spin_lock_init(&inode->i_data.tree_lock);
-	spin_lock_init(&inode->i_data.i_mmap_lock);
+	mutex_init(&inode->i_data.i_mmap_mutex);
 	INIT_LIST_HEAD(&inode->i_data.private_list);
 	spin_lock_init(&inode->i_data.private_lock);
 	INIT_RAW_PRIO_TREE_ROOT(&inode->i_data.i_mmap);
@@ -1192,7 +1192,7 @@ EXPORT_SYMBOL(remove_inode_hash);
  * I_FREEING is set so that no-one will take a new reference to the inode while
  * it is being deleted.
  */
-void generic_delete_inode(struct inode *inode)
+int generic_delete_inode(struct inode *inode)
 {
 	const struct super_operations *op = inode->i_sb->s_op;
 
@@ -1220,6 +1220,7 @@ void generic_delete_inode(struct inode *inode)
 	wake_up_inode(inode);
 	BUG_ON(inode->i_state != I_CLEAR);
 	destroy_inode(inode);
+	return 1;
 }
 EXPORT_SYMBOL(generic_delete_inode);
 
@@ -1280,12 +1281,13 @@ static void generic_forget_inode(struct inode *inode)
  * inode when the usage count drops to zero, and
  * i_nlink is zero.
  */
-void generic_drop_inode(struct inode *inode)
+int generic_drop_inode(struct inode *inode)
 {
 	if (!inode->i_nlink)
 		generic_delete_inode(inode);
 	else
 		generic_forget_inode(inode);
+	return 1;
 }
 EXPORT_SYMBOL_GPL(generic_drop_inode);
 
@@ -1303,7 +1305,7 @@ EXPORT_SYMBOL_GPL(generic_drop_inode);
 static inline void iput_final(struct inode *inode)
 {
 	const struct super_operations *op = inode->i_sb->s_op;
-	void (*drop)(struct inode *) = generic_drop_inode;
+	int (*drop)(struct inode *) = generic_drop_inode;
 
 	if (op && op->drop_inode)
 		drop = op->drop_inode;

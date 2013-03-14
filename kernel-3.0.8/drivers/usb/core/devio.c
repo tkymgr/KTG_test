@@ -1672,16 +1672,17 @@ static int proc_release_port(struct dev_state *ps, void __user *arg)
  * are assuming that somehow the configuration has been prevented from
  * changing.  But there's no mechanism to ensure that...
  */
-static int usbdev_ioctl(struct inode *inode, struct file *file,
-			unsigned int cmd, unsigned long arg)
+static long usbdev_do_ioctl(struct file *file, unsigned int cmd,
+				void __user *p)
 {
 	struct dev_state *ps = file->private_data;
+	struct inode *inode = file->f_path.dentry->d_inode;
 	struct usb_device *dev = ps->dev;
-	void __user *p = (void __user *)arg;
 	int ret = -ENOTTY;
 
 	if (!(file->f_mode & FMODE_WRITE))
 		return -EPERM;
+
 	usb_lock_device(dev);
 	if (!connected(ps)) {
 		usb_unlock_device(dev);
@@ -1825,6 +1826,28 @@ static int usbdev_ioctl(struct inode *inode, struct file *file,
 	return ret;
 }
 
+static long usbdev_ioctl(struct file *file, unsigned int cmd,
+			unsigned long arg)
+{
+	int ret;
+
+	ret = usbdev_do_ioctl(file, cmd, (void __user *)arg);
+
+	return ret;
+}
+
+#ifdef CONFIG_COMPAT
+static long usbdev_compat_ioctl(struct file *file, unsigned int cmd,
+			unsigned long arg)
+{
+	int ret;
+
+	ret = usbdev_do_ioctl(file, cmd, compat_ptr(arg));
+
+	return ret;
+}
+#endif
+
 /* No kernel lock - fine */
 static unsigned int usbdev_poll(struct file *file,
 				struct poll_table_struct *wait)
@@ -1845,7 +1868,7 @@ const struct file_operations usbdev_file_operations = {
 	.llseek =	usbdev_lseek,
 	.read =		usbdev_read,
 	.poll =		usbdev_poll,
-	.ioctl =	usbdev_ioctl,
+	.unlocked_ioctl = usbdev_ioctl,
 	.open =		usbdev_open,
 	.release =	usbdev_release,
 };

@@ -214,9 +214,7 @@ static int qcedev_lock_ce(struct qcedev_control *podev)
 
 #define QCEDEV_MAGIC 0x56434544 /* "qced" */
 
-static int qcedev_ioctl
-(struct inode *inode, struct file *file,
-				unsigned cmd, unsigned long arg);
+static long qcedev_ioctl(struct file *file, unsigned cmd, unsigned long arg);
 static int qcedev_open(struct inode *inode, struct file *file);
 static int qcedev_release(struct inode *inode, struct file *file);
 static int start_cipher_req(struct qcedev_control *podev);
@@ -224,7 +222,7 @@ static int start_sha_req(struct qcedev_control *podev);
 
 static const struct file_operations qcedev_fops = {
 	.owner = THIS_MODULE,
-	.ioctl = qcedev_ioctl,
+	.unlocked_ioctl = qcedev_ioctl,
 	.open = qcedev_open,
 	.release = qcedev_release,
 };
@@ -1421,8 +1419,7 @@ sha_error:
 	return -EINVAL;
 }
 
-static int qcedev_ioctl(struct inode *inode, struct file *file,
-			  unsigned cmd, unsigned long arg)
+static long qcedev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	int err = 0;
 	struct qcedev_control *podev;

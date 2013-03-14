@@ -1352,8 +1352,7 @@ done:
 	return err;
 }
 
-static ssize_t cy8ctma300_touch_ioctl(struct inode *inode, struct file *file,
-				unsigned int cmd, unsigned long arg)
+static long cy8ctma300_touch_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct cy8ctma300_touch *tp =
 	(struct cy8ctma300_touch *)file->private_data;
@@ -1806,7 +1805,7 @@ static DEVICE_ATTR(touch_cmd, S_IRUSR | S_IWUSR | S_IROTH, cy8ctma300_cmd_show,
 static const struct file_operations cy8ctma300_touch_fops = {
 	.owner = THIS_MODULE,
 	.open = cy8ctma300_touch_open,
-	.ioctl = cy8ctma300_touch_ioctl,
+	.unlocked_ioctl = cy8ctma300_touch_ioctl,
 	.release = cy8ctma300_touch_release,
 };
 

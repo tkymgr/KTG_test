@@ -78,7 +78,7 @@ rpc_timeout_upcall_queue(struct work_struct *work)
 }
 
 /**
- * rpc_queue_upcall
+ * rpc_queue_upcall - queue an upcall message to userspace
  * @inode: inode of upcall pipe on which to queue given message
  * @msg: message to queue
  *
@@ -308,11 +308,11 @@ rpc_pipe_poll(struct file *filp, struct poll_table_struct *wait)
 	return mask;
 }
 
-static int
-rpc_pipe_ioctl(struct inode *ino, struct file *filp,
-		unsigned int cmd, unsigned long arg)
+static long
+rpc_pipe_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	struct rpc_inode *rpci = RPC_I(filp->f_path.dentry->d_inode);
+	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct rpc_inode *rpci = RPC_I(inode);
 	int len;
 
 	switch (cmd) {
@@ -337,7 +337,7 @@ static const struct file_operations rpc_pipe_fops = {
 	.read		= rpc_pipe_read,
 	.write		= rpc_pipe_write,
 	.poll		= rpc_pipe_poll,
-	.ioctl		= rpc_pipe_ioctl,
+	.unlocked_ioctl	= rpc_pipe_ioctl,
 	.open		= rpc_pipe_open,
 	.release	= rpc_pipe_release,
 };

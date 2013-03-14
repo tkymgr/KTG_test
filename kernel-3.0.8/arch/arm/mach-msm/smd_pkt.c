@@ -9,11 +9,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
  */
 /*
  * SMD Packet Driver -- Provides a binary SMD non-muxed packet port
@@ -176,11 +171,8 @@ static void loopback_probe_worker(struct work_struct *work)
 
 }
 
-
-int smd_pkt_ioctl(struct inode *inode,
-		    struct file *file,
-		    unsigned int cmd,
-		    unsigned long arg)
+static long smd_pkt_ioctl(struct file *file, unsigned int cmd,
+					     unsigned long arg)
 {
 	int ret;
 	struct smd_pkt_dev *smd_pkt_devp;
@@ -696,7 +688,7 @@ static const struct file_operations smd_pkt_fops = {
 	.read = smd_pkt_read,
 	.write = smd_pkt_write,
 	.poll = smd_pkt_poll,
-	.ioctl = smd_pkt_ioctl,
+	.unlocked_ioctl = smd_pkt_ioctl,
 };
 
 static int __init smd_pkt_init(void)

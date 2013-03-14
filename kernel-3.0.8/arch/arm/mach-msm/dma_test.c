@@ -211,8 +211,7 @@ static int dma_test_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int dma_test_ioctl(struct inode *inode, struct file *file,
-			  unsigned cmd, unsigned long arg)
+static long dma_test_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	int err = 0;
 	int tmp;
@@ -320,7 +319,7 @@ static int dma_test_ioctl(struct inode *inode, struct file *file,
 
 static const struct file_operations dma_test_fops = {
 	.owner = THIS_MODULE,
-	.ioctl = dma_test_ioctl,
+	.unlocked_ioctl = dma_test_ioctl,
 	.open = dma_test_open,
 	.release = dma_test_release,
 };
