@@ -79,7 +79,7 @@ unsigned blk_ordered_req_seq(struct request *rq)
 	 *
 	 * http://thread.gmane.org/gmane.linux.kernel/537473
 	 */
-	if (!blk_fs_request(rq))
+	if (rq->cmd_type != REQ_TYPE_FS)
 		return QUEUE_ORDSEQ_DRAIN;
 
 	if ((rq->cmd_flags & REQ_ORDERED_COLOR) ==
@@ -203,7 +203,7 @@ static inline bool start_ordered(struct request_queue *q, struct request **rqp)
 		/* initialize proxy request and queue it */
 		blk_rq_init(q, rq);
 		if (bio_data_dir(q->orig_bar_rq->bio) == WRITE)
-			rq->cmd_flags |= REQ_RW;
+			rq->cmd_flags |= REQ_WRITE;
 		if (q->ordered & QUEUE_ORDERED_DO_FUA)
 			rq->cmd_flags |= REQ_FUA;
 		init_request_from_bio(rq, q->orig_bar_rq->bio);
@@ -236,7 +236,7 @@ static inline bool start_ordered(struct request_queue *q, struct request **rqp)
 bool blk_do_ordered(struct request_queue *q, struct request **rqp)
 {
 	struct request *rq = *rqp;
-	const int is_barrier = blk_fs_request(rq) && blk_barrier_rq(rq);
+	const int is_barrier = (rq->cmd_type == REQ_TYPE_FS) && blk_barrier_rq(rq);
 
 	if (!q->ordseq) {
 		if (!is_barrier)
@@ -261,7 +261,7 @@ bool blk_do_ordered(struct request_queue *q, struct request **rqp)
 	 */
 
 	/* Special requests are not subject to ordering rules. */
-	if (!blk_fs_request(rq) &&
+	if (rq->cmd_type != REQ_TYPE_FS &&
 	    rq != &q->pre_flush_rq && rq != &q->post_flush_rq)
 		return true;
 

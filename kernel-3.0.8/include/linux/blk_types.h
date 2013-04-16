@@ -12,6 +12,8 @@
 struct bio_set;
 struct bio;
 struct bio_integrity_payload;
+struct page;
+struct block_device;
 typedef void (bio_end_io_t) (struct bio *, int);
 typedef void (bio_destructor_t) (struct bio *);
 
@@ -95,6 +97,7 @@ struct bio {
 #define BIO_NULL_MAPPED 9	/* contains invalid user pages */
 #define BIO_FS_INTEGRITY 10	/* fs owns integrity data, not block layer */
 #define BIO_QUIET	11	/* Make BIO Quiet */
+#define BIO_MAPPED_INTEGRITY 12/* integrity metadata has been remapped */
 #define bio_flagged(bio, flag)	((bio)->bi_flags & (1 << (flag)))
 
 /*
@@ -104,7 +107,7 @@ struct bio {
 #define BIO_POOL_NONE		((1UL << BIO_POOL_BITS) - 1)
 #define BIO_POOL_OFFSET		(BITS_PER_LONG - BIO_POOL_BITS)
 #define BIO_POOL_MASK		(1UL << BIO_POOL_OFFSET)
-#define BIO_POOL_IDX(bio)	((bio)->bi_flags >> BIO_POOL_OFFSET)	
+#define BIO_POOL_IDX(bio)	((bio)->bi_flags >> BIO_POOL_OFFSET)
 
 /*
  * bio bi_rw flags
@@ -174,15 +177,27 @@ enum {
 };
 
 /*
- * request type modified bits. first four bits match BIO_RW* bits, important
+ * Request flags.  For use in the cmd_flags field of struct request, and in
+ * bi_rw of struct bio.  Note that some flags are only valid in either one.
  */
 enum rq_flag_bits {
-	__REQ_RW,		/* not set, read. set, write */
+	/* common flags */
+	__REQ_WRITE,		/* not set, read. set, write */
 	__REQ_FAILFAST_DEV,	/* no driver retries of device errors */
 	__REQ_FAILFAST_TRANSPORT, /* no driver retries of transport errors */
 	__REQ_FAILFAST_DRIVER,	/* no driver retries of driver errors */
-	/* above flags must match BIO_RW_* */
+
+	__REQ_SYNC,		/* request is sync (sync write or read) */
+	__REQ_META,		/* metadata io request */
 	__REQ_DISCARD,		/* request to discard sectors */
+	__REQ_NOIDLE,		/* don't anticipate more IO after this one */
+
+	/* bio only flags */
+	__REQ_RAHEAD,		/* read ahead, can fail anytime */
+	__REQ_THROTTLED,	/* This bio has already been subjected to
+				 * throttling rules. Don't do it again. */
+
+	/* request only flags */
 	__REQ_SORTED,		/* elevator knows about this request */
 	__REQ_SOFTBARRIER,	/* may not be passed by ioscheduler */
 	__REQ_HARDBARRIER,	/* may not be passed by drive either */
@@ -196,45 +211,56 @@ enum rq_flag_bits {
 	__REQ_QUIET,		/* don't worry about errors */
 	__REQ_PREEMPT,		/* set for "ide_preempt" requests */
 	__REQ_ORDERED_COLOR,	/* is before or after barrier */
-	__REQ_RW_SYNC,		/* request is sync (sync write or read) */
 	__REQ_ALLOCED,		/* request came from our alloc pool */
-	__REQ_RW_META,		/* metadata io request */
 	__REQ_COPY_USER,	/* contains copies of user pages */
+	__REQ_FLUSH,		/* request for cache flush */
+	__REQ_FLUSH_SEQ,	/* request for flush sequence */
 	__REQ_INTEGRITY,	/* integrity metadata has been remapped */
-	__REQ_NOIDLE,		/* Don't anticipate more IO after this one */
 	__REQ_IO_STAT,		/* account I/O stat */
 	__REQ_MIXED_MERGE,	/* merge of different types, fail separately */
+	__REQ_SECURE,		/* secure discard (used with __REQ_DISCARD) */
 	__REQ_NR_BITS,		/* stops here */
 };
 
-#define REQ_RW		(1 << __REQ_RW)
+#define REQ_WRITE		(1 << __REQ_WRITE)
 #define REQ_FAILFAST_DEV	(1 << __REQ_FAILFAST_DEV)
 #define REQ_FAILFAST_TRANSPORT	(1 << __REQ_FAILFAST_TRANSPORT)
 #define REQ_FAILFAST_DRIVER	(1 << __REQ_FAILFAST_DRIVER)
-#define REQ_DISCARD	(1 << __REQ_DISCARD)
-#define REQ_SORTED	(1 << __REQ_SORTED)
-#define REQ_SOFTBARRIER	(1 << __REQ_SOFTBARRIER)
-#define REQ_HARDBARRIER	(1 << __REQ_HARDBARRIER)
-#define REQ_FUA		(1 << __REQ_FUA)
-#define REQ_NOMERGE	(1 << __REQ_NOMERGE)
-#define REQ_STARTED	(1 << __REQ_STARTED)
-#define REQ_DONTPREP	(1 << __REQ_DONTPREP)
-#define REQ_QUEUED	(1 << __REQ_QUEUED)
-#define REQ_ELVPRIV	(1 << __REQ_ELVPRIV)
-#define REQ_FAILED	(1 << __REQ_FAILED)
-#define REQ_QUIET	(1 << __REQ_QUIET)
-#define REQ_PREEMPT	(1 << __REQ_PREEMPT)
-#define REQ_ORDERED_COLOR	(1 << __REQ_ORDERED_COLOR)
-#define REQ_RW_SYNC	(1 << __REQ_RW_SYNC)
-#define REQ_ALLOCED	(1 << __REQ_ALLOCED)
-#define REQ_RW_META	(1 << __REQ_RW_META)
-#define REQ_COPY_USER	(1 << __REQ_COPY_USER)
-#define REQ_INTEGRITY	(1 << __REQ_INTEGRITY)
-#define REQ_NOIDLE	(1 << __REQ_NOIDLE)
-#define REQ_IO_STAT	(1 << __REQ_IO_STAT)
-#define REQ_MIXED_MERGE	(1 << __REQ_MIXED_MERGE)
+#define REQ_SYNC		(1 << __REQ_SYNC)
+#define REQ_META		(1 << __REQ_META)
+#define REQ_DISCARD		(1 << __REQ_DISCARD)
+#define REQ_NOIDLE		(1 << __REQ_NOIDLE)
 
-#define REQ_FAILFAST_MASK	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | \
-				 REQ_FAILFAST_DRIVER)
+#define REQ_FAILFAST_MASK \
+	(REQ_FAILFAST_DEV | REQ_FAILFAST_TRANSPORT | REQ_FAILFAST_DRIVER)
+#define REQ_COMMON_MASK \
+	(REQ_WRITE | REQ_FAILFAST_MASK | REQ_SYNC | REQ_META | REQ_DISCARD | \
+	 REQ_NOIDLE | REQ_FLUSH | REQ_FUA | REQ_SECURE)
+#define REQ_CLONE_MASK		REQ_COMMON_MASK
+
+#define REQ_RAHEAD		(1 << __REQ_RAHEAD)
+#define REQ_THROTTLED		(1 << __REQ_THROTTLED)
+
+#define REQ_SORTED		(1 << __REQ_SORTED)
+#define REQ_SOFTBARRIER		(1 << __REQ_SOFTBARRIER)
+#define REQ_HARDBARRIER	(1 << __REQ_HARDBARRIER)
+#define REQ_FUA			(1 << __REQ_FUA)
+#define REQ_NOMERGE		(1 << __REQ_NOMERGE)
+#define REQ_STARTED		(1 << __REQ_STARTED)
+#define REQ_DONTPREP		(1 << __REQ_DONTPREP)
+#define REQ_QUEUED		(1 << __REQ_QUEUED)
+#define REQ_ELVPRIV		(1 << __REQ_ELVPRIV)
+#define REQ_FAILED		(1 << __REQ_FAILED)
+#define REQ_QUIET		(1 << __REQ_QUIET)
+#define REQ_PREEMPT		(1 << __REQ_PREEMPT)
+#define REQ_ORDERED_COLOR	(1 << __REQ_ORDERED_COLOR)
+#define REQ_ALLOCED		(1 << __REQ_ALLOCED)
+#define REQ_COPY_USER		(1 << __REQ_COPY_USER)
+#define REQ_FLUSH		(1 << __REQ_FLUSH)
+#define REQ_FLUSH_SEQ		(1 << __REQ_FLUSH_SEQ)
+#define REQ_INTEGRITY	(1 << __REQ_INTEGRITY)
+#define REQ_IO_STAT		(1 << __REQ_IO_STAT)
+#define REQ_MIXED_MERGE		(1 << __REQ_MIXED_MERGE)
+#define REQ_SECURE		(1 << __REQ_SECURE)
 
 #endif /* __LINUX_BLK_TYPES_H */

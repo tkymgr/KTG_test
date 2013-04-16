@@ -798,7 +798,7 @@ static void dm_end_request(struct request *clone, int error)
 	struct mapped_device *md = tio->md;
 	struct request *rq = tio->orig;
 
-	if (blk_pc_request(rq) && !is_barrier) {
+	if (rq->cmd_type == REQ_TYPE_BLOCK_PC && !is_barrier) {
 		rq->errors = clone->errors;
 		rq->resid_len = clone->resid_len;
 
